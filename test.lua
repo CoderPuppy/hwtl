@@ -3,100 +3,90 @@ local parse = require './parse'
 local parse2 = require './parse2'
 local parse3 = require './parse3'
 local compile = require './compile'
-local resolve = require './resolve'
+local resolve = require './resolve' {}
 local pretty = require './pretty'
 local pl = require 'pl.import_into' ()
+local util = require './util'
 
-local h = io.open('test.lisp', 'r')
-local c = h:read '*a'
-h:close()
-
---[==[
+-- --[==[
 print('----]] Parsing')
-local i = 1
-local line, col = 1, 1
-local src = {
-	consume = function(self, pat)
-		local res = table.pack(c:match('^(' .. pat .. ')(.*)$', i))
-		if res[1] then
-			local cr = false
-			for c in res[1]:gmatch '.' do
-				if c == '\n' then
-					if not cr then
-						line = line + 1
-						col = 1
-					end
-					cr = false
-				elseif c == '\r' then
-					cr = true
-					line = line + 1
-					col = 1
-				else
-					col = col + 1
-				end
-			end
-			i = i + #res[1]
-			if res.n > 2 then
-				return table.unpack(res, 2, res.n - 1)
-			else
-				return res[1]
-			end
-		end
-	end;
-	tostring = function(self)
-		return tostring(line) .. ':' .. tostring(col) .. ': ' .. ('%q'):format(c:sub(i))
-	end;
-	try = function(self, f)
-		local state = self:state()
-		local res, err = f(self)
-		if res then
-			return res, err
-		else
-			self:restore_state(state)
-			return res, err
-		end
-	end;
-	state = function(self)
-		return { i = i; line = line; col = col; }
-	end;
-	restore_state = function(self, state)
-		i = state.i
-		line = state.i
-		col = state.i
-	end;
+local h = io.open('test.lisp', 'r')
+local res = parse3.match {
+	handle = h;
+	src ='test.lisp';
+	fn = parse3.main;
+	args = table.pack('hi');
 }
-local sexp, err = parse.spaceList(parse.expr)(src)
-print(pl.pretty.write(sexp))
-for _, err in ipairs(err) do
-	print(('%d:%d: %s\n-------------\n%s\n-------------'):format(err.state.line, err.state.col, err.traceback, c:sub(err.state.i)))
-end
-print(src:tostring())
-print('-------------')
-for i = 1, sexp.n do
-	print(pretty(sexp[i]))
+h:close()
+local sexps = res.vals[1]
+
+print(pl.pretty.write(res))
+for _, sexp in ipairs(sexps) do
+	print(pretty(sexp))
 end
 print()
 -- ]==]
 
---[==[
+-- --[==[
 print('----]] Resolving')
-local env = resolve.env()
-table.insert(env.includes, function(name)
-	if name == 'hwtl/primitive/unquote' then
-	end
-end)
-local fns = {}
-for i = 1, sexp.n do
-	fns[i] = function() resolve.resolve(env, sexp[i]) end
+local env = resolve.namespace('env')
+local builtins = resolve.block('builtins'); do
+	table.insert(builtins.namespace.entries, {
+		type = 'define';
+		name = 'define';
+		var = {
+			name = 'define';
+			block = builtins;
+			mutable = false;
+		};
+	})
 end
-local co = coroutine.create(function() resolve.parallel(table.unpack(fns, 1, sexp.n)) end)
+table.insert(env.entries, {
+	type = 'namespace';
+	namespace = builtins.namespace;
+	here = { pre = ''; post = ''; };
+	there = { pre = ''; post = ''; };
+})
+print('builtins', tostring(builtins.namespace))
+print('env', tostring(env))
+local co = coroutine.create(function()
+	return resolve.parallel(util.unpack(util.map(function(sexp)
+		return table.pack(resolve.resolve, env, sexp)
+	end)(sexps)))
+end)
+local uniq_vars = setmetatable({}, {
+	__index = function(self, namespace)
+		local data = {}
+		local t = setmetatable({}, {
+			__index = data;
+			__newindex = function(_, name, var)
+				if data[name] and data[name] ~= var then
+					error 'bad'
+				else
+					data[name] = var
+				end
+			end;
+		})
+		rawset(self, namespace, t)
+		return t
+	end;
+})
 while coroutine.status(co) == 'suspended' do
 	local res = table.pack(coroutine.resume(co))
 	if res[1] then
 		local s = coroutine.status(co)
-		print(s, pl.pretty.write(res))
 		if s == 'suspended' then
-			error('dead lock')
+			local cmd = res[2]
+			print('outer: cmd', resolve.pp_cmd(cmd))
+			if cmd.type == 'wait' then
+				error('dead lock')
+			elseif cmd.type == 'uniq_var' then
+				uniq_vars[cmd.namespace][cmd.name] = cmd.var
+			else
+				error('unhandled cmd type: ' .. cmd.type)
+			end
+		elseif s == 'dead' then
+			print('outer: dead', pl.pretty.write(res))
 		else
 			error('unhandled status: ' .. s)
 		end

@@ -339,6 +339,8 @@ function expr()
 					function() exact '\\t' return '\t' end;
 					function() exact '\\"' return '"' end;
 					function() exact '\\\\' return '\\' end;
+					function() exact '\\ ' return ' ' end;
+					function() exact '\\\n'; while try(oneOf, { ' ', '\t' }) do end return '' end;
 					function()
 						exact '\\x'
 						local s = hex() .. hex()
@@ -459,27 +461,7 @@ local function match(opts)
 
 	local function create_co(lbl, fn)
 		return coroutine.create(function(...)
-			local res = table.pack(xpcall(fn, function(msg)
-				local i = 3
-				local n = 0
-				while n < 2 do
-					local _, msg_ = pcall(error, '@', i)
-					if msg_ == '@' then
-						n = n + 1
-					else
-						n = 0
-					end
-					msg = msg .. '\n  ' .. msg_
-					i = i + 1
-				end
-				msg = msg .. '\n  <parse:' .. lbl .. '>'
-				return msg
-			end, ...))
-			if res[1] then
-				return table.unpack(res, 2, res.n)
-			else
-				error(res[2])
-			end
+			return util.reerror('parse: ' .. lbl, fn, ...)
 		end);
 	end
 

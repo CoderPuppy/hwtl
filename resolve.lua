@@ -1,80 +1,204 @@
 local pl = require 'pl.import_into' ()
-local function new_env()
-	local env = {
-		includes = {};
-	}
-	return env
-end
-local function resolve_var(env, name)
-	local var
-	while not var do
-		for _, include in ipairs(env.includes) do
-			local var_ = include(name)
-			if var_ then
-				if var then
-					error('ambiguous var: ' .. name)
-				end
-				var = var_
-			end
-		end
-		if var then break end
-		coroutine.yield { type = 'var'; env = env; name = name; }
+local util = require './util'
+
+return function(opts)
+	local resolve = {}
+
+	function resolve.namespace(name)
+		local namespace = {
+			name = name;
+			entries = {};
+		}
+		return namespace
 	end
-	error('TODO: var: ' .. name)
-end
-local function resolve(env, sexp)
-	if sexp.type == 'sym' then
-		local var = resolve_var(env, sexp.name)
-		error('TODO: var: ' .. sexp.name)
-	elseif sexp.type == 'list' then
-		local fn = resolve(env, sexp[1])
-		error 'TODO: apply'
-	else
-		error('unhandled sexp type: ' .. sexp.type)
+
+	function resolve.pp_namespace(namespace)
+		return namespace.name
 	end
-end
-local function parallel(...)
-	local cos = {}
-	for i = 1, select('#', ...) do
-		cos[i] = coroutine.create(select(i, ...))
+
+	function resolve.block(name)
+		local block = {
+			name = name;
+			namespace = resolve.namespace(name);
+		}
+		return block
 	end
-	while true do
-		local waits = {n = 0;}
-		local any_waiting = false
-		for _, co in ipairs(cos) do
-			local s = coroutine.status(co)
-			if s == 'suspended' then
-				local res = table.pack(coroutine.resume(co))
-				if res[1] then
-					local s_ = coroutine.status(co)
-					if s_ == 'suspended' then
-						any_waiting = true
-						for i = 2, res.n do
-							local wait = res[i]
-							waits.n = waits.n + 1
-							waits[waits.n] = wait
+
+	function resolve.pp_block(block)
+		return block.name
+	end
+
+	function resolve.resolve_var(namespace, name)
+		local var
+		while true do
+			local waits = resolve.waits()
+			waits.namespace_entries[namespace] = true
+			for _, entry in ipairs(namespace.entries) do
+				if var then break end
+				repeat
+					if entry.type == 'namespace' then
+						if name:sub(1, #entry.here.pre) ~= entry.here.pre then break end
+						if entry.here.post ~= '' and name:sub(-#entry.here.post) ~= entry.here.post then break end
+						local co = util.create_co('resolve.resolve_var: namespace', table.pack(
+							resolve.resolve_var,
+								entry.namespace,
+								entry.there.pre .. name:sub(#entry.here.pre + 1, -(#entry.here.post + 1)) .. entry.there.post
+						))
+						while true do
+							local res_ = table.pack(coroutine.resume(co))
+							local s = coroutine.status(co)
+							if s == 'suspended' then
+								local cmd = res_[2]
+								if cmd.type == 'wait' then
+									resolve.merge_waits(waits, cmd.waits)
+									break
+								else
+									coroutine.yield(cmd)
+								end
+							elseif s == 'dead' then
+								if res_[1] then
+									var = res_[2]
+									break
+								else
+									error(res_[2], 0)
+								end
+							else
+								error('unhandled status: ' .. s)
+							end
+						end
+					elseif entry.type == 'define' then
+						if name == entry.name then
+							var = entry.var
+							break
 						end
 					else
-						error('unhandled status: ' .. s)
+						error('unhandled entry type: ' .. entry.type)
 					end
-				else
-					error(res[2])
-				end
-			else
-				error('unhandled status: ' .. s)
+				until true
 			end
+			if var then break end
+			coroutine.yield { type = 'wait'; waits = waits; }
 		end
-		if any_waiting then
-			print(pl.pretty.write(waits))
-			coroutine.yield(table.unpack(waits, 1, waits.n))
+		coroutine.yield {
+			type = 'uniq_var';
+			namespace = namespace;
+			name = name;
+			var = var;
+		}
+		return var
+	end
+
+	function resolve.pp_var(var)
+		local str = ''
+		if var.mutable then str = str .. 'mutable ' end
+		str = ('%s%q in %s'):format(str, var.name, resolve.pp_block(var.block))
+		return str
+	end
+
+	function resolve.resolve(namespace, sexp)
+		if sexp.type == 'sym' then
+			return {
+				type = 'var';
+				var = resolve.resolve_var(namespace, sexp.name);
+			}
+		elseif sexp.type == 'list' then
+			local fn = resolve.resolve(namespace, sexp[1])
+			print(pl.pretty.write(fn))
+			return {
+				type = 'apply';
+				fn = fn;
+				args = table.pack(util.unpack(sexp, 2));
+			}
 		else
-			error 'TODO'
+			error('unhandled sexp type: ' .. sexp.type)
 		end
 	end
+
+	function resolve.merge_waits(waits, ...)
+		for i = 1, select('#', ...) do
+			local waits_ = select(i, ...)
+			for namespace in pairs(waits_.namespace_entries) do
+				waits.namespace_entries[namespace] = true
+			end
+		end
+		return waits
+	end
+
+	function resolve.waits()
+		local waits = {}
+		waits.namespace_entries = {}
+		setmetatable(waits, {
+			__len = function(self)
+				for namespace in pairs(self.namespace_entries) do
+					return true
+				end
+				return false
+			end;
+		})
+		return waits
+	end
+
+	function resolve.pp_cmd(cmd)
+		if cmd.type == 'uniq_var' then
+			return ('uniq_var(%s, %q, %s)'):format(resolve.pp_namespace(cmd.namespace), cmd.name, resolve.pp_var(cmd.var))
+		elseif cmd.type == 'wait' then
+			local strs = {n = 0}
+			for namespace in pairs(cmd.waits.namespace_entries) do
+				strs.n = strs.n + 1
+				strs[strs.n] = 'namespace_entries(' .. resolve.pp_namespace(namespace) .. ')'
+			end
+			return 'wait(' .. table.concat(strs, ', ') .. ')'
+		else
+			error('unhandled cmd type: ' .. cmd.type)
+		end
+	end
+
+	function resolve.parallel(...)
+		local cos = util.map(util.cut(util.create_co, 'resolve.parallel', util._))(table.pack(...))
+		local ress = {}
+		while true do
+			local waits = resolve.waits()
+			local any = false
+			local work = false
+			for co_i, co in ipairs(cos) do
+				if coroutine.status(co) == 'suspended' then
+					while true do
+						local res_ = table.pack(coroutine.resume(co))
+						local s = coroutine.status(co)
+						if s == 'suspended' then
+							local cmd = res_[2]
+							if cmd.type == 'wait' then
+								any = true
+								resolve.merge_waits(waits, cmd.waits)
+								break
+							else
+								work = true
+								coroutine.yield(cmd)
+							end
+						elseif s == 'dead' then
+							if res_[1] then
+								ress[co_i] = table.pack(util.unpack(res_, 2))
+								break
+							else
+								error(res_[2], 0)
+							end
+						else
+							error('unhandled status: ' .. s)
+						end
+					end
+				end
+			end
+			if any then
+				if not #waits then error 'no?' end
+				if not work then
+					coroutine.yield { type = 'wait'; waits = waits; }
+				end
+			else
+				break
+			end
+		end
+		return table.unpack(ress, 1, cos.n)
+	end
+
+	return resolve
 end
-return {
-	env = new_env;
-	resolve = resolve;
-	resovle_var = resolve_var;
-	parallel = parallel;
-}
