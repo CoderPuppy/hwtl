@@ -1,3 +1,5 @@
+local pl = require 'pl.import_into' ()
+
 local function append(t, ...)
 	for i = 1, select('#', ...) do
 		for _, e in ipairs(select(i, ...)) do
@@ -112,6 +114,33 @@ local function create_co(lbl, fn)
 	end)
 end
 
+local function push(tbl, ...)
+	for i = 1, select('#', ...) do
+		tbl[tbl.n + i] = select(i, ...)
+	end
+	tbl.n = tbl.n + select('#', ...)
+	return tbl
+end
+
+local function remove_idx(tbl, i)
+	tbl.n = tbl.n - 1
+	for i = i, tbl.n do
+		tbl[i] = tbl[i + 1]
+	end
+	tbl[tbl.n + 1] = nil
+end
+
+local function pp_sym(sym)
+	local t = type(sym)
+	if t == 'string' then
+		return sym
+	elseif t == 'table' and sym.name then
+		return '#' .. pp_sym(sym.name)
+	else
+		error('unhandled sym type: ' .. t)
+	end
+end
+
 return {
 	concat = concat;
 	append = append;
@@ -123,4 +152,7 @@ return {
 	map_message = map_message;
 	reerror = reerror;
 	create_co = create_co;
+	push = push;
+	remove_idx = remove_idx;
+	pp_sym = pp_sym;
 }
