@@ -113,92 +113,84 @@ return function(opts)
 			end;
 		})
 		function namespace.add_entry(entry)
+			assert(type(entry) == 'function', 'resolve.namespace#add_entry: entry must be a function')
 			entries.n = entries.n + 1
 			entries[entries.n] = entry
 		end
 		return namespace
 	end
 
-	function resolve.block(name)
-		local block = {
-			name = name;
-			namespace = resolve.namespace(name);
+	function resolve.race(parent_complete_ref)
+		local race = {
+			parent_complete_ref = parent_complete_ref;
+			complete_ref = { name = 'resolve.race.complete_ref'; value = false; };
+			jobs = {n = 0};
+			ress = {n = 0};
 		}
-		return block
-	end
-
-	function resolve.pp_block(block)
-		return block.name
-	end
-
-	function resolve.resolve_var(namespace, name, parent_complete_ref)
-		local i = 0
-		local jobs = {n = 0}
-		local var
-		local complete_ref = { name = 'resolve.resolve_var.complete_ref'; value = false; }
-		local function found_var(var_)
-			if var and var_ ~= var then
-				error 'bad'
-			end
-			var = var_
+		function race.found(...)
+			util.push(race.ress, table.pack(...))
 		end
-		while true do
-			if parent_complete_ref and parent_complete_ref.value then
-				break
+		function race.run(waits)
+			if race.parent_complete_ref and race.parent_complete_ref.value then
+				return true
 			end
-			if namespace.entries.n > i then
-				for j = i + 1, namespace.entries.n do
-					local entry = namespace.entries[j]
-					repeat
-						if entry.type == 'namespace' then
-							if name:sub(1, #entry.here.pre) ~= entry.here.pre then break end
-							if entry.here.post ~= '' and name:sub(-#entry.here.post) ~= entry.here.post then break end
-							-- TODO: better renaming
-							util.push(jobs, resolve.spawn('resolve.resolve_var(' .. namespace.name .. ', ' .. ('%q'):format(name) .. '): namespace(' .. entry.namespace.name .. ')',
-								function()
-									local var = resolve.resolve_var(
-										entry.namespace,
-										entry.there.pre ..
-										name:sub(#entry.here.pre + 1, -(#entry.here.post + 1))
-										.. entry.there.post,
-										complete_ref
-									)
-									return var
-								end
-							))
-						elseif entry.type == 'define' then
-							if name == entry.name then
-								found_var(entry.var)
-							end
-						elseif entry.type == 'function' then
-							util.push(jobs, resolve.spawn('resolve.resolve_var(' .. namespace.name .. ', ' .. ('%q'):format(name) .. '): function', entry.fn, namespace, name, complete_ref))
-						else
-							error('unhandled entry type: ' .. entry.type)
-						end
-					until true
-				end
-				i = namespace.entries.n
+			if not waits then
+				waits = resolve.waits()
 			end
-			local waits = resolve.waits()
-			waits.vars[namespace][name] = true
-			if parent_complete_ref then waits.refs[parent_complete_ref] = true end
-			waits.namespace_entries[namespace] = true
+			if race.parent_complete_ref then waits.refs[race.parent_complete_ref] = true end
 			local job_i = 1
-			while job_i <= jobs.n do
-				local job = jobs[job_i]
+			while job_i <= race.jobs.n do
+				local job = race.jobs[job_i]
 				if job.res then
 					if job.res[1] then
-						found_var(job.res[1])
+						util.push(race.ress, job.res)
 					end
-					util.remove_idx(jobs, job_i)
+					util.remove_idx(race.jobs, job_i)
 					job_i = job_i - 1
 				else
 					waits.jobs[job] = true
 				end
 				job_i = job_i + 1
 			end
-			if var then break end
+			if race.ress.n > 0 then return true end
 			coroutine.yield { type = 'wait'; waits = waits; }
+			return false
+		end
+		function race.done()
+			coroutine.yield {
+				type = 'update_ref';
+				ref = race.complete_ref;
+				value = true;
+			}
+		end
+		return race
+	end
+
+	function resolve.resolve_var(namespace, name, parent_complete_ref)
+		local i = 0
+		local race = resolve.race(parent_complete_ref)
+		while true do
+			if namespace.entries.n > i then
+				for j = i + 1, namespace.entries.n do
+					util.push(race.jobs, resolve.spawn(
+						'resolve.resolve_var(' .. namespace.name .. ', ' .. ('%q'):format(name) .. ')',
+						namespace.entries[j], name, race.complete_ref
+					))
+				end
+				i = namespace.entries.n
+			end
+			local waits = resolve.waits()
+			waits.vars[namespace][name] = true
+			waits.namespace_entries[namespace] = true
+			if race.run(waits) then break end
+		end
+		race.done()
+		local var
+		for _, res in ipairs(race.ress) do
+			if var and var ~= res[1] then
+				error 'bad'
+			end
+			var = res[1]
 		end
 		if var then
 			coroutine.yield {
@@ -208,31 +200,44 @@ return function(opts)
 				var = var;
 			}
 		end
-		coroutine.yield {
-			type = 'update_ref';
-			ref = complete_ref;
-			value = true;
-		}
 		return var
 	end
 
 	function resolve.pp_var(var)
 		local str = ''
 		if var.mutable then str = str .. 'mutable ' end
-		str = ('%s%q in %s'):format(str, var.name, resolve.pp_block(var.block))
+		str = ('%s%q in %s'):format(str, var.name, var.namespace.name)
 		return str
 	end
 
-	function resolve.resolve(ctx, sexp)
+	function resolve.resolve(namespace, sexp, k, out_k, in_ns, out_ns)
+		assert(namespace, 'resolve.resolve: namespace required')
+		assert(sexp, 'resolve.resolve: sexp required')
+		assert(k, 'resolve.resolve: k required')
+		assert(out_k, 'resolve.resolve: out_k required')
+		assert(in_ns, 'resolve.resolve: in_ns required')
+		assert(out_ns, 'resolve.resolve: out_ns required')
 		if sexp.type == 'sym' then
-			return {
+			local var = resolve.resolve_var(in_ns, sexp.name)
+			k.op = {
 				type = 'var';
-				var = resolve.resolve_var(ctx.block.namespace, sexp.name);
+				var = var;
+				k = out_k;
 			}
+			k.gen_outs()
+			var.uses[k] = true
+			out_ns.add_entry(function(name, complete_ref)
+				return resolve.resolve_var(in_ns, name, complete_ref)
+			end)
 		elseif sexp.type == 'list' then
-			local fn_ir = resolve.resolve(ctx, sexp[1])
+			local fn_k = opts.continuations.new('resolve.resolve: apply.after-fn')
+			local inter_ns = resolve.namespace('resolve.resolve: apply.inter_ns')
+			inter_ns.add_entry(function(name, complete_ref)
+				return resolve.resolve_var(namespace, name, complete_ref)
+			end)
+			resolve.resolve(namespace, sexp[1], k, fn_k, in_ns, inter_ns)
 			repeat
-				local fn_const = resolve._fold_constants(fn_ir)
+				local fn_const = resolve._fold_constants(fn_k)
 				if not fn_const then break end
 				local fn_const = fn_const()
 				local rule = opts.call_rules[opts.backend.type(fn_const)]
@@ -240,42 +245,85 @@ return function(opts)
 				return rule {
 					fn = fn_const;
 					args = util.xtend(table.pack(util.unpack(sexp, 2)), { tail = sexp.tail });
-					ctx = ctx;
+					namespace = namespace;
+					k = fn_k;
+					out_k = out_k;
+					in_ns = in_ns;
+					out_ns = out_ns;
 					-- TODO
 				}
 			until true
-			local args_ir = {n = sexp.n - 1}
-			for i = 1, args_ir.n do
-				args_ir[i] = {
-					type = 'defer';
-					job = resolve.spawn('resolve.resolve: apply.args.' .. i, resolve.resolve, ctx, sexp[i + 1]);
-				}
+			local ap_k
+			if sexp.n == 1 then
+				ap_k = fn_k
+			else
+				ap_k = opts.continuations.new('resolve.resolve: apply.ap')
 			end
-			return {
-				type = 'apply';
-				fn = fn_ir;
-				args = args_ir;
+			local arg_ks = {
+				n = sexp.n; -- one more than the number of arguments
+				[1] = fn_k;
+				[sexp.n] = ap_k;
 			}
+			local arg_nss = {
+				n = sexp.n; -- one more than the number of arguments
+				[1] = inter_ns;
+				[sexp.n] = out_ns;
+			}
+			for i = 2, sexp.n - 1 do
+				arg_ks[i] = opts.continuations.new('resolve.resolve: apply.args.' .. tostring(i))
+				arg_nss[i] = resolve.namespace('resolve.resolve: apply.args.' .. tostring(i))
+				arg_nss[i].add_entry(function(name, complete_ref)
+					return resolve.resolve_var(namespace, name, complete_ref)
+				end)
+			end
+			for i = 1, sexp.n - 1 do
+				resolve.spawn('resolve.resolve: apply.args.' .. i, resolve.resolve, namespace, sexp[i + 1], arg_ks[i], arg_ks[i + 1], arg_nss[i], arg_nss[i + 1])
+			end
+			ap_k.op = {
+				type = 'apply';
+				fn = ap_k.use_val(fn_k);
+				args = {n = sexp.n - 1;};
+				k = out_k;
+			}
+			for i = 2, arg_ks.n do
+				ap_k.op.args[i - 1] = ap_k.use_val(arg_ks[i])
+			end
+			ap_k.gen_outs()
 		elseif sexp.type == 'str' then
-			return {
+			k.op = {
 				type = 'str';
 				str = sexp.str;
+				k = out_k;
 			}
+			k.gen_outs()
 		else
 			error('unhandled sexp type: ' .. sexp.type)
 		end
 	end
 
-	function resolve._fold_constants(ir, typ)
-		if ir.type == 'var' then
-			if ir.var.mutable then
-				error 'TODO'
-			else
+	function resolve._fold_constants(k, typ)
+		local consts = {n = 0}
+		for in_k in pairs(k.ins) do
+			if not in_k.op then error 'TODO' end
+			if in_k.op.type == 'var' and in_k.op.var.type == 'const' then
 				-- TODO: are the constaints for constant folding the same (or tighter) as for reording evaluation?
-				return resolve._fold_constants(ir.var.value, typ)
+				local const = resolve._fold_constants(in_k.op.var.out_k, typ)
+				if const then
+					util.push(consts, const)
+				end
+			elseif opts.constant_folding_rules[in_k.op.type] then
+				local const = opts.constant_folding_rules[in_k.op.type](resolve._fold_constants, in_k, k, typ)
+				if const then
+					util.push(consts, const)
+				end
 			end
-		elseif opts.constant_folding_rules[ir.type] then
-			return opts.constant_folding_rules[ir.type](resolve._fold_constants, ir, typ)
+		end
+		if consts.n == 0 then
+			return nil
+		elseif consts.n == 1 then
+			return consts[1]
+		else
+			error 'TODO'
 		end
 	end
 
@@ -293,6 +341,9 @@ return function(opts)
 			for job in pairs(waits_.jobs) do
 				waits.jobs[job] = true
 			end
+			for k in pairs(waits_.continuations) do
+				waits.continuations[k] = true
+			end
 		end
 		return waits
 	end
@@ -309,6 +360,7 @@ return function(opts)
 		})
 		waits.jobs = {}
 		waits.refs = {}
+		waits.continuations = {}
 		setmetatable(waits, {
 			__len = function(self)
 				for namespace in pairs(self.namespace_entries) do
@@ -323,6 +375,9 @@ return function(opts)
 					return true
 				end
 				for ref in pairs(self.refs) do
+					return true
+				end
+				for k in pairs(self.continuations) do
 					return true
 				end
 				return false
@@ -351,6 +406,10 @@ return function(opts)
 			strs.n = strs.n + 1
 			strs[strs.n] = 'ref(' .. ref.name .. ')'
 		end
+		for k in pairs(waits.continuations) do
+			strs.n = strs.n + 1
+			strs[strs.n] = 'continuation(' .. k.name .. ')'
+		end
 		return table.concat(strs, ', ')
 	end
 
@@ -359,6 +418,8 @@ return function(opts)
 			return ('uniq_var(%s, %q, %s)'):format(cmd.namespace.name, cmd.name, resolve.pp_var(cmd.var))
 		elseif cmd.type == 'wait' then
 			return 'wait(' .. resolve.pp_waits(cmd.waits) .. ')'
+		elseif cmd.type == 'update_ref' then
+			return 'update_ref(' .. cmd.ref.name .. ', ' .. tostring(cmd.ref.val) .. ')'
 		else
 			error('unhandled cmd type: ' .. cmd.type)
 		end
