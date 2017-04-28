@@ -25,10 +25,75 @@ if true then
 end
 
 local reify_i = {name = 'reify';}
+local lua_i = {name = 'lua';}
 local macro_t = {name = 'macro';}
 local fn_t = {name = 'fn';}
-local lua_fn_t = {name = 'lua_fn';}
-local number_t = {name = 'number';}
+local num_t = {name = 'number';}
+local str_t = {name = 'string';}
+local call_ctx_t = {name = 'call_ctx';}
+local lambda_i = {name = 'lambda';}
+local return_i = {name = 'return';}
+
+local continuations = require './continuations' {
+	out_rule = function(k)
+		if k.op then
+			if k.op.type == reify_i then
+				return { main = function(fn)
+					local res
+					res, k.op.k = fn(k.op.k)
+					return res
+				end; }
+			elseif k.op.type == 'var' then
+				return { main = function(fn)
+					local res
+					res, k.op.k = fn(k.op.k)
+					return res
+				end; }
+			elseif k.op.type == 'str' then
+				return { main = function(fn)
+					local res
+					res, k.op.k = fn(k.op.k)
+					return res
+				end; }
+			elseif k.op.type == 'apply' then
+				return {}
+			elseif k.op.type == 'define' then
+				return { main = function(fn)
+					local res
+					res, k.op.k = fn(k.op.k)
+					return res
+				end; }
+			elseif k.op.type == lua_i then
+				return { main = function(fn)
+					local res
+					res, k.op.k = fn(k.op.k)
+					return res
+				end; }
+			else
+				error('TODO: ' .. util.pp_sym(k.op.type))
+			end
+		else
+			return {}
+		end
+	end;
+}
+
+local code_env = {}
+setmetatable(code_env, { __index = _G })
+code_env.util = util
+code_env.extern = setmetatable({
+	macro_t = macro_t;
+	fn_t = fn_t;
+	call_ctx_t = call_ctx_t;
+	continuations = continuations;
+	reify_i = reify_i;
+	lambda_i = lambda_i;
+	return_i = return_i;
+}, {
+	__index = function(self, key)
+		error('bad: ' .. key)
+	end;
+})
 
 local const_rules, const_rules_ap
 const_rules = {
@@ -41,6 +106,16 @@ const_rules = {
 			return k.op.value
 		end
 	end;
+	[lua_i] = function(rec, k, out_k, typ)
+		local fn, err = load('return ' .. k.op.str, nil, nil, code_env)
+		if err then error(err) end
+		local ok, res = pcall(fn)
+		if ok then
+			return function() return res end
+		else
+			error(res)
+		end
+	end;
 }
 const_rules_ap = {
 }
@@ -50,64 +125,27 @@ local backend = {
 	type = function(v) return v.type end;
 }
 
+local resolve = require './resolve' {
+	continuations = continuations;
+	constant_folding_rules = const_rules;
+	call_rules = {
+		[macro_t] = function(ctx)
+			assert(ctx.fn.fn.type == fn_t)
+			return ctx.fn.fn.fn(function(...) return ... end, util.xtend({ type = call_ctx_t; }, ctx))
+		end;
+	};
+	backend = backend;
+}
+code_env.extern.resolve = resolve
+
 if true then
 	-- print('----]] Resolving')
-	local continuations = require './continuations' {
-		out_rule = function(k)
-			if k.op then
-				if k.op.type == reify_i then
-					return { main = function(fn)
-						local res
-						res, k.op.k = fn(k.op.k)
-						return res
-					end; }
-				elseif k.op.type == 'var' then
-					return { main = function(fn)
-						local res
-						res, k.op.k = fn(k.op.k)
-						return res
-					end; }
-				elseif k.op.type == 'str' then
-					return { main = function(fn)
-						local res
-						res, k.op.k = fn(k.op.k)
-						return res
-					end; }
-				elseif k.op.type == 'apply' then
-					return {}
-				elseif k.op.type == 'define' then
-					return { main = function(fn)
-						local res
-						res, k.op.k = fn(k.op.k)
-						return res
-					end; }
-				else
-					error('TODO: ' .. util.pp_sym(k.op.type))
-				end
-			else
-				return {}
-			end
-		end;
-	}
-	local resolve = require './resolve' {
-		continuations = continuations;
-		constant_folding_rules = const_rules;
-		call_rules = {
-			[macro_t] = function(ctx)
-				return ctx.fn.fn(ctx)
-			end;
-		};
-		backend = backend;
-	}
 	local builtins = resolve.namespace('builtins'); do
-		local function define(name, value)
+		local function define(name, op)
 			local in_k = continuations.new('builtins.' .. name .. ': in_k')
 			local out_k = continuations.new('builtins.' .. name .. ': out_k')
-			in_k.op = {
-				type = reify_i;
-				value = value;
-				k = out_k;
-			}
+			in_k.op = op
+			in_k.op.k = out_k
 			in_k.gen_outs()
 			local var = {
 				type = 'const';
@@ -124,152 +162,209 @@ if true then
 			end)
 		end
 		define('define', {
-			type = macro_t;
-			fn = function(ctx)
-				assert(ctx.args.n == 3, 'define expects three arguments')
-				assert(ctx.args[1].type == 'sym', 'define expects a symbol for the first argument')
-				assert(ctx.args[2].type == 'sym', 'define expects a symbol for the second argument')
-				-- print('define', ctx.namespace.name, ctx.args[1].name)
+			type = lua_i;
+			pure = true;
+			str = [[
+				{
+					type = extern.macro_t;
+					fn = {
+						type = extern.fn_t;
+						fn = function(k, ctx)
+							assert(ctx.type == extern.call_ctx_t)
+							assert(ctx.args.n == 3, 'define expects three arguments')
+							assert(ctx.args[1].type == 'sym', 'define expects a symbol for the first argument')
+							assert(ctx.args[2].type == 'sym', 'define expects a symbol for the second argument')
+							-- print('define', ctx.namespace.name, ctx.args[1].name)
 
-				local typ = ctx.args[1].name
-				local name = ctx.args[2].name
-				local val = ctx.args[3].name
-				assert(typ == 'const' or typ == 'imm' or typ == 'mut', 'define expects the first argument to be one of `const`, `imm`, `mut`')
+							local typ = ctx.args[1].name
+							local name = ctx.args[2].name
+							local val = ctx.args[3].name
+							assert(typ == 'const' or typ == 'imm' or typ == 'mut', 'define expects the first argument to be one of `const`, `imm`, `mut`')
 
-				local in_k, out_k
-				local var = {
-					type = typ;
-					name = name;
-					uses = {};
+							local in_k, out_k
+							local var = {
+								type = typ;
+								name = name;
+								uses = {};
+							}
+							if typ == 'const' then
+								var.namespace = ctx.namespace
+								var.in_k = extern.continuations.new('TODO: var const in_k')
+								var.out_k = extern.continuations.new('TODO: var const out_k')
+								ctx.k.op = {
+									type = 'var';
+									var = var;
+									k = ctx.out_k;
+								}
+								ctx.k.gen_outs()
+							else
+								var.namespace = ctx.out_ns
+								var.in_k = ctx.k
+								var.out_k = extern.continuations.new('TODO: var imm/mut out_k')
+								var.out_k.op = {
+									type = 'define';
+									var = var;
+									value = var.out_k.use_val(var.out_k);
+									k = ctx.out_k;
+								}
+								var.out_k.gen_outs()
+							end
+							local job = extern.resolve.spawn(
+								'define: namespace = ' .. ctx.namespace.name .. ', name = ' .. ('%q'):format(ctx.args[1].name),
+								extern.resolve.resolve, ctx.namespace, ctx.args[ctx.args.n], var.in_k, var.out_k, ctx.in_ns, extern.resolve.namespace('define out_ns')
+							)
+							var.namespace.add_entry(function(name_)
+								if name_ == name then
+									return var
+								end
+							end)
+
+							ctx.out_ns.add_entry(function(name, complete_ref)
+								return extern.resolve.resolve_var(ctx.in_ns, name, complete_ref)
+							end)
+
+							return k()
+						end;
+					};
 				}
-				if typ == 'const' then
-					var.namespace = ctx.namespace
-					var.in_k = continuations.new('TODO: var const in_k')
-					var.out_k = continuations.new('TODO: var const out_k')
-					ctx.k.op = {
-						type = 'var';
-						var = var;
-						k = ctx.out_k;
-					}
-					ctx.k.gen_outs()
-				else
-					var.namespace = ctx.out_ns
-					var.in_k = ctx.k
-					var.out_k = continuations.new('TODO: var imm/mut out_k')
-					var.out_k.op = {
-						type = 'define';
-						var = var;
-						value = var.out_k.use_val(var.out_k);
-						k = ctx.out_k;
-					}
-					var.out_k.gen_outs()
-				end
-				local job = resolve.spawn(
-					'define: namespace = ' .. ctx.namespace.name .. ', name = ' .. ('%q'):format(ctx.args[1].name),
-					resolve.resolve, ctx.namespace, ctx.args[ctx.args.n], var.in_k, var.out_k, ctx.in_ns, resolve.namespace('define out_ns')
-				)
-				var.namespace.add_entry(function(name_)
-					if name_ == name then
-						return var
-					end
-				end)
-
-				ctx.out_ns.add_entry(function(name, complete_ref)
-					return resolve.resolve_var(ctx.in_ns, name, complete_ref)
-				end)
+			]];
+			fn = function(ctx)
 			end;
 		})
 		define('lambda', {
-			type = macro_t;
+			type = lua_i;
+			str = [[
+				{
+					type = extern.macro_t;
+					fn = {
+						type = extern.fn_t;
+						fn = function(k, ctx)
+							assert(ctx.type == extern.call_ctx_t)
+							assert(ctx.args.n > 2, 'lambda expects two or more arguments')
+							assert(ctx.args[1].type == 'list', 'lambda expects a list of symbols for the first argument')
+							for i = 1, ctx.args[1].n do
+								assert(ctx.args[1][i].type == 'sym', 'lambda expects a list of symbols for the first argument')
+							end
+
+							local namespace = extern.resolve.namespace(ctx.namespace.name .. '/lambda');
+
+							namespace.add_entry(function(name, complete_ref)
+								return extern.resolve.resolve_var(ctx.namespace, name, complete_ref)
+							end)
+
+							local ret_k = extern.continuations.new('lambda return')
+							local ks = {
+								n = ctx.args.n; -- one more than the number of expressions in the body
+								[ctx.args.n] = ret_k;
+							}
+							for i = 2, ctx.args.n do
+								ks[i - 1] = extern.continuations.new('lambda.body.' .. i - 1)
+							end
+
+							local args = {n = ctx.args[1].n}
+							for i = 1 , ctx.args[1].n do
+								args[i] = {
+									type = 'arg';
+									name = ctx.args[1][i].name;
+									namespace = namespace;
+									uses = {};
+									intro_k = ks[1];
+								}
+								namespace.add_entry(function(name_)
+									if name_ == args[i].name then
+										return args[i]
+									end
+								end)
+							end
+
+							local nss = {
+								n = ctx.args.n; -- one more than the number of expressions in the body
+								[1] = ctx.in_ns;
+							}
+							for i = 2, ctx.args.n do
+								nss[i] = extern.resolve.namespace('lambda.body.' .. i - 1)
+								nss[i].add_entry(function(name, complete_ref)
+									return extern.resolve.resolve_var(namespace, name, complete_ref)
+								end)
+							end
+							for i = 2, ctx.args.n do
+								extern.resolve.spawn('lambda.body.' .. i - 1, extern.resolve.resolve, namespace, ctx.args[i], ks[i - 1], ks[i], nss[i - 1], nss[i])
+							end
+
+							ret_k.op = {
+								type = extern.return_i;
+								args = ret_k.use_val(ret_k);
+							}
+
+							ctx.k.op = {
+								type = extern.lambda_i;
+								args = args;
+								entry_k = ks[1];
+								ret_k = ret_k;
+								k = ctx.out_k;
+							}
+
+							ctx.out_ns.add_entry(function(name, complete_ref)
+								return extern.resolve.resolve_var(ctx.in_ns, name, complete_ref)
+							end)
+							return k()
+						end;
+					};
+				}
+			]];
 			fn = function(ctx)
-				assert(ctx.args.n > 2, 'lambda expects two or more arguments')
-				assert(ctx.args[1].type == 'list', 'lambda expects a list of symbols for the first argument')
-				for i = 1, ctx.args[1].n do
-					assert(ctx.args[1][i].type == 'sym', 'lambda expects a list of symbols for the first argument')
-				end
-
-				local namespace = resolve.namespace(ctx.namespace.name .. '/lambda');
-
-				namespace.add_entry(function(name, complete_ref)
-					return resolve.resolve_var(ctx.namespace, name, complete_ref)
-				end)
-
-				local ret_k = continuations.new('lambda return')
-				local ks = {
-					n = ctx.args.n; -- one more than the number of expressions in the body
-					[ctx.args.n] = ret_k;
-				}
-				for i = 2, ctx.args.n do
-					ks[i - 1] = continuations.new('lambda.body.' .. i - 1)
-				end
-
-				local args = {n = ctx.args[1].n}
-				for i = 1 , ctx.args[1].n do
-					args[i] = {
-						type = 'arg';
-						name = ctx.args[1][i].name;
-						namespace = namespace;
-						uses = {};
-						intro_k = ks[1];
-					}
-					namespace.add_entry(function(name_)
-						if name_ == args[i].name then
-							return args[i]
-						end
-					end)
-				end
-
-				local nss = {
-					n = ctx.args.n; -- one more than the number of expressions in the body
-					[1] = ctx.in_ns;
-				}
-				for i = 2, ctx.args.n do
-					nss[i] = resolve.namespace('lambda.body.' .. i - 1)
-					nss[i].add_entry(function(name, complete_ref)
-						return resolve.resolve_var(namespace, name, complete_ref)
-					end)
-				end
-				for i = 2, ctx.args.n do
-					resolve.spawn('lambda.body.' .. i - 1, resolve.resolve, namespace, ctx.args[i], ks[i - 1], ks[i], nss[i - 1], nss[i])
-				end
-
-				local fn = {}
-				fn.type = fn_t
-				fn.args = args
-				fn.k = ks[1]
-				fn.ret_k = ret_k
-				ctx.k.op = {
-					type = reify_i;
-					value = fn;
-					k = ctx.out_k;
-				}
-
-				ctx.out_ns.add_entry(function(name, complete_ref)
-					return resolve.resolve_var(ctx.in_ns, name, complete_ref)
-				end)
 			end;
 		})
 		define('lua/tonumber', {
-			type = lua_fn_t;
-			fn = tonumber;
+			type = lua_i;
+			str = [[
+				{
+					type = extern.fn_t;
+					fn = function(k, str, base)
+						return k(tonumber(str, base))
+					end;
+				}
+			]];
 		})
 		define('lua/+', {
-			type = lua_fn_t;
-			fn = function(...)
-				local n = 0
-				for i = 1, select('#', ...) do
-					n = n + select(i, ...)
-				end
-				return n
-			end;
+			type = lua_i;
+			str = [[
+				{
+					type = extern.fn_t;
+					fn = function(k, ...)
+						local n = 0
+						for i = 1, select('#', ...) do
+							local n_ = select(i, ...)
+							assert(n_.type == extern.num_t)
+							n = n + n_.value
+						end
+						return k({ type = extern.num_t; value = n; })
+					end;
+				}
+			]];
 		})
 		define('lua/io/read',  {
-			type = lua_fn_t;
-			fn = io.read;
+			type = lua_i;
+			str = [[
+				{
+					type = extern.fn_t;
+					fn = function(k, format)
+						assert(format.type == extern.str_t)
+						return k(io.read(format.value))
+					end;
+				}
+			]];
 		})
 		define('log!', {
-			type = lua_fn_t;
-			fn = print;
+			type = lua_i;
+			str = [[
+				{
+					type = extern.fn_t;
+					fn = function(k, ...)
+						return k(print(...))
+					end;
+				}
+			]];
 		})
 		do
 			local cache = setmetatable({}, {
@@ -277,11 +372,13 @@ if true then
 					local in_k = continuations.new('builtins.' .. i .. ': in_k')
 					local out_k = continuations.new('builtins.' .. i .. ': out_k')
 					in_k.op = {
-						type = reify_i;
-						value = {
-							type = number_t;
-							number = i;
-						};
+						type = lua_i;
+						str = [[
+							{
+								type = extern.num_t;
+								value = ]] .. tostring(i) .. [[;
+							}
+						]];
 						k = out_k;
 					}
 					in_k.gen_outs()
@@ -480,24 +577,85 @@ if true then
 			error('unhandled ir type: ' .. util.pp_sym(ir.type))
 		end
 	end
-	print'digraph {'
-	for i = 1, ks.n do
-		local k = ks[i]
-		local names = 'names: '
-		local first = true
-		for name in pairs(k.names) do
-			if not first then
-				names = names .. ', '
-			end
-			names = names .. name
-			first = false
-		end
-		pp_edge(
-			pp_node(tostring {}, {label = '"' .. names:gsub('"', '\\"') .. '"'}),
-			pp_k(k),
-			{}
-		)
-	end
-	print'}'
+	-- print'digraph {'
+	-- for i = 1, ks.n do
+	-- 	local k = ks[i]
+	-- 	local names = 'names: '
+	-- 	local first = true
+	-- 	for name in pairs(k.names) do
+	-- 		if not first then
+	-- 			names = names .. ', '
+	-- 		end
+	-- 		names = names .. name
+	-- 		first = false
+	-- 	end
+	-- 	pp_edge(
+	-- 		pp_node(tostring {}, {label = '"' .. names:gsub('"', '\\"') .. '"'}),
+	-- 		pp_k(k),
+	-- 		{}
+	-- 	)
+	-- end
+	-- print'}'
 	-- print()
+	
+	local res_names = {}
+	local var_names = {}
+	local codegen_k
+	local function var_name(var)
+		if not var_names[var] then var_names[var] = 'v' .. tostring(var):sub(10) end
+		return var_names[var]
+	end
+	local function res_name(k)
+		if not res_names[k.node] then res_names[k.node] = 'r' .. tostring(k.node):sub(10) end
+		return res_names[k.node]
+	end
+	local function codegen_k_inner(k)
+		if k.op then
+			if k.op.type == 'var' then
+				if k.op.var.namespace == builtins then
+					-- return 'return pass(error \'TODO: builtin: ' .. k.op.var.name .. '\')(' .. codegen_k(k.op.k) .. ')'
+					return 'return pass(TODO' .. k.op.var.name .. ')(' .. codegen_k(k.op.k) .. ')'
+				else
+					if not var_names[k.op.var] then return 'really: ' .. k.op.var.name end
+					return 'return pass(' .. var_names[k.op.var] .. ')(' .. codegen_k(k.op.k) .. ')'
+				end
+			elseif k.op.type == reify_i then
+				return 'return pass(error \'TODO: reify\')(' .. codegen_k(k.op.k) .. ')'
+			elseif k.op.type == 'define' then
+				return
+					'local ' .. var_name(k.op.var) .. ' = ' .. res_name(k.op.value) .. '[1]; ' ..
+					'return pass(' .. var_name(k.op.var) .. ')(' .. codegen_k(k.op.k) .. ')'
+			elseif k.op.type == 'apply' then
+				local str =
+					'local fn = ' .. res_name(k.op.fn) .. '[1]; ' ..
+					'assert(fn.type == extern.fn_t); ' ..
+					'return fn.fn(' .. codegen_k(k.op.k)
+				for i = 1, k.op.args.n do
+					str = str .. ', util.unpack(' .. res_name(k.op.args[i]) .. ')'
+				end
+				str = str .. ')'
+				return str
+			elseif k.op.type == lambda_i then
+				local str = 'return pass({ type = extern.fn_t; fn = function(ret_k'
+				for i = 1, k.op.args.n do
+					str = str .. ', ' .. var_name(k.op.args[i])
+				end
+				str = str .. ') return pass()(' .. codegen_k(k.op.entry_k) .. ') end; })(' .. codegen_k(k.op.k) .. ')'
+				return str
+			elseif k.op.type == return_i then
+				return 'return ret_k(util.unpack(' .. res_name(k.op.args) .. '))'
+			elseif k.op.type == 'str' then
+				return 'return pass({ type = extern.str_t; value = ' .. ('%q'):format(k.op.str) .. '; })(' .. codegen_k(k.op.k) .. ')'
+			else
+				error('unhandled operation type: ' .. util.pp_sym(k.op.type))
+			end
+		else
+			return 'return util.unpack(' .. res_name(k) .. ')'
+		end
+	end
+	function codegen_k(k)
+		local str = codegen_k_inner(k)
+		return 'function(...) local ' .. res_name(k) .. ' = table.pack(...); ' .. str .. ' end'
+	end
+	print('return pass(...)(' .. codegen_k(ks[1]) .. ')')
 end
