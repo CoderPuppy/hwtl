@@ -35,45 +35,102 @@ local lambda_i = {name = 'lambda';}
 local return_i = {name = 'return';}
 
 local continuations = require './continuations' {
-	out_rule = function(k)
+	-- TODO: this should be a table
+	link_rule = function(k)
 		if k.op then
 			if k.op.type == reify_i then
-				return { main = function(fn)
-					local res
-					res, k.op.k = fn(k.op.k)
-					return res
-				end; }
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = {};
+				}
 			elseif k.op.type == 'var' then
-				return { main = function(fn)
-					local res
-					res, k.op.k = fn(k.op.k)
-					return res
-				end; }
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = {};
+				}
 			elseif k.op.type == 'str' then
-				return { main = function(fn)
-					local res
-					res, k.op.k = fn(k.op.k)
-					return res
-				end; }
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = {};
+				}
 			elseif k.op.type == 'apply' then
-				return {}
+				local val_ins = {
+					n = 0;
+				}
+				util.push(val_ins, {
+					k = k.op.fn;
+				})
+				for i = 1, k.op.args.n do
+					util.push(val_ins, {
+						k = k.op.args[i];
+					})
+				end
+				return {
+					flow_outs = {
+						closed = false;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = val_ins;
+				}
 			elseif k.op.type == 'define' then
-				return { main = function(fn)
-					local res
-					res, k.op.k = fn(k.op.k)
-					return res
-				end; }
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = {
+						{
+							k = k.op.value;
+						};
+					};
+				}
 			elseif k.op.type == lua_i then
-				return { main = function(fn)
-					local res
-					res, k.op.k = fn(k.op.k)
-					return res
-				end; }
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+					};
+					val_ins = {};
+				}
+			elseif k.op.type == lambda_i then
+				return {
+					flow_outs = {
+						closed = true;
+						{
+							k = k.op.k;
+						};
+						{
+							k = k.op.entry_k;
+						};
+					};
+					val_ins = {};
+				}
 			else
 				error('TODO: ' .. util.pp_sym(k.op.type))
 			end
 		else
-			return {}
+			error 'bad'
 		end
 	end;
 }
@@ -146,7 +203,7 @@ if true then
 			local out_k = continuations.new('builtins.' .. name .. ': out_k')
 			in_k.op = op
 			in_k.op.k = out_k
-			in_k.gen_outs()
+			in_k.gen_links()
 			local var = {
 				type = 'const';
 				name = name;
@@ -196,18 +253,19 @@ if true then
 									var = var;
 									k = ctx.out_k;
 								}
-								ctx.k.gen_outs()
+								ctx.k.gen_links()
 							else
 								var.namespace = ctx.out_ns
 								var.in_k = ctx.k
 								var.out_k = extern.continuations.new('TODO: var imm/mut out_k')
+								var.intro_k = ctx.out_k
 								var.out_k.op = {
 									type = 'define';
 									var = var;
-									value = var.out_k.use_val(var.out_k);
+									value = var.out_k;
 									k = ctx.out_k;
 								}
-								var.out_k.gen_outs()
+								var.out_k.gen_links()
 							end
 							local job = extern.resolve.spawn(
 								'define: namespace = ' .. ctx.namespace.name .. ', name = ' .. ('%q'):format(ctx.args[1].name),
@@ -293,8 +351,9 @@ if true then
 
 							ret_k.op = {
 								type = extern.return_i;
-								args = ret_k.use_val(ret_k);
+								args = ret_k;
 							}
+							ret_k.gen_links()
 
 							ctx.k.op = {
 								type = extern.lambda_i;
@@ -303,6 +362,7 @@ if true then
 								ret_k = ret_k;
 								k = ctx.out_k;
 							}
+							ctx.k.gen_links()
 
 							ctx.out_ns.add_entry(function(name, complete_ref)
 								return extern.resolve.resolve_var(ctx.in_ns, name, complete_ref)
@@ -381,7 +441,7 @@ if true then
 						]];
 						k = out_k;
 					}
-					in_k.gen_outs()
+					in_k.gen_links()
 					local var = {
 						type = 'const';
 						name = tostring(i);
@@ -487,7 +547,7 @@ if true then
 		return pp_node(id, attrs)
 	end
 	function pp_k(k)
-		local id = tostring(k.node)
+		local id = tostring(k)
 		if pp_ks[k] then return id end
 		pp_ks[k] = true
 		local attrs = {}
@@ -606,8 +666,8 @@ if true then
 		return var_names[var]
 	end
 	local function res_name(k)
-		if not res_names[k.node] then res_names[k.node] = 'r' .. tostring(k.node):sub(10) end
-		return res_names[k.node]
+		if not res_names[k] then res_names[k] = 'r' .. tostring(k):sub(10) end
+		return res_names[k]
 	end
 	local function codegen_k_inner(k)
 		if k.op then

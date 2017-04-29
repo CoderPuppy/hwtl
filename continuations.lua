@@ -3,89 +3,54 @@ local pl = require 'pl.import_into' ()
 return function(opts)
 	local continuations = {}
 
-	local function make_use(node, use)
-		if not use then
-			use = {}
+	-- TODO: move this to `resolve.continuation`
+	function continuations.new(name)
+		local data = {
+			name = name;
+			flow_ins  = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
+			flow_outs = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
+			val_ins   = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
+			val_outs  = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
+		}
+		local fns = {}
+		local node = {}
+		function fns.gen_links()
+			for out_k in pairs(node.flow_outs) do
+				out_k.flow_ins[node] = {}
+			end
+			for in_k in pairs(node.val_ins) do
+				in_k.val_outs[node] = {}
+			end
+			data.flow_outs = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
+			data.val_ins   = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
+			local links = opts.link_rule(node)
+			for _, link in ipairs(links.flow_outs) do
+				node.flow_outs[link.k][link] = true
+				link.k.flow_ins[node][link] = true
+			end
+			for _, link in ipairs(links.val_ins) do
+				node.val_ins[link.k][link] = true
+				link.k.val_outs[node][link] = true
+			end
 		end
-		setmetatable(use, {
+		return setmetatable(node, {
 			__index = function(_, key)
-				if key == 'op' or key == 'names' or key == 'ins' or key == 'outs' or key == 'gen_outs' or key == 'use_val' or key == 'val_uses' then
-					return node[key]
-				elseif key == 'node' then
-					return node
+				if fns[key] then
+					return fns[key]
+				elseif key == 'op' or key == 'flow_ins' or key == 'flow_outs' or key == 'val_outs' or key == 'val_ins' then
+					return data[key]
 				else
-					print('TODO: ' .. tostring(key))
+					error('TODO: get ' .. key)
 				end
 			end;
 			__newindex = function(_, key, val)
 				if key == 'op' then
-					node[key] = val
+					data[key] = val
 				else
-					error('TODO: ' .. tostring(key))
+					error('TODO: set ' .. key)
 				end
 			end;
-			__pairs = function(self)
-				return function(self, prev_key)
-					local key
-					if prev_key == nil then
-						key = 'names'
-					elseif prev_key == 'names' then
-						key = 'op'
-					end
-					if key then
-						return key, self[key]
-					end
-				end, self
-			end;
-			__eq = function() error 'nope' end;
 		})
-		node.uses[use] = true
-		return use
-	end
-
-	function continuations.new(name)
-		local node = {}
-		node.names = {[name] = true}
-		node.ins = {}
-		node.outs = {}
-		node.uses = {}
-		node.val_uses = {}
-		local use = make_use(node)
-		function node.gen_outs()
-			for out_k in pairs(node.outs) do
-				out_k.ins[use] = nil
-			end
-			node.outs = {}
-			local outs = opts.out_rule(use)
-			for name, out in pairs(outs) do
-				local out_k = out(function(v) return v, v end)
-				node.outs[out_k] = true
-				out_k.ins[use] = true
-			end
-		end
-		function node.use_val(k)
-			k.val_uses[use] = true
-			return k
-		end
-		return use
-	end
-
-	function continuations.merge(k, ...)
-		for i = 1, select('#', ...) do
-			local k_ = select(i, ...)
-			for name in pairs(k_.names) do
-				k.names[name] = true
-			end
-			if k_.op then
-				if k.op then error 'bad' end
-				k.op = k_.op
-				k.node.outs = k_.outs
-			end
-			for in_k in pairs(k_.ins) do
-				k.ins[in_k] = true
-			end
-		end
-		return k
 	end
 
 	return continuations

@@ -224,7 +224,7 @@ return function(opts)
 				var = var;
 				k = out_k;
 			}
-			k.gen_outs()
+			k.gen_links()
 			var.uses[k] = true
 			out_ns.add_entry(function(name, complete_ref)
 				return resolve.resolve_var(in_ns, name, complete_ref)
@@ -281,21 +281,21 @@ return function(opts)
 			end
 			ap_k.op = {
 				type = 'apply';
-				fn = ap_k.use_val(fn_k);
+				fn = fn_k;
 				args = {n = sexp.n - 1;};
 				k = out_k;
 			}
 			for i = 2, arg_ks.n do
-				ap_k.op.args[i - 1] = ap_k.use_val(arg_ks[i])
+				ap_k.op.args[i - 1] = arg_ks[i]
 			end
-			ap_k.gen_outs()
+			ap_k.gen_links()
 		elseif sexp.type == 'str' then
 			k.op = {
 				type = 'str';
 				str = sexp.str;
 				k = out_k;
 			}
-			k.gen_outs()
+			k.gen_links()
 		else
 			error('unhandled sexp type: ' .. sexp.type)
 		end
