@@ -1,4 +1,5 @@
 local pl = require 'pl.import_into' ()
+local util = require './util'
 
 return function(opts)
 	local continuations = {}
@@ -15,6 +16,7 @@ return function(opts)
 		local fns = {}
 		local node = {}
 		function fns.gen_links()
+			assert(node.op, 'continuation#gen_links: it needs to have an operation')
 			for out_k in pairs(node.flow_outs) do
 				out_k.flow_ins[node] = {}
 			end
@@ -23,7 +25,9 @@ return function(opts)
 			end
 			data.flow_outs = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
 			data.val_ins   = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
-			local links = opts.link_rule(node)
+			local rule = opts.link_rules[node.op.type]
+			assert(rule, 'continuation#gen_links: unhandled operation type: ' .. util.pp_sym(node.op.type))
+			local links = rule(node)
 			for _, link in ipairs(links.flow_outs) do
 				node.flow_outs[link.k][link] = true
 				link.k.flow_ins[node][link] = true

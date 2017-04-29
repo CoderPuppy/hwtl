@@ -35,104 +35,109 @@ local lambda_i = {name = 'lambda';}
 local return_i = {name = 'return';}
 
 local continuations = require './continuations' {
-	-- TODO: this should be a table
-	link_rule = function(k)
-		if k.op then
-			if k.op.type == reify_i then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
+	link_rules = {
+		[reify_i] = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
 					};
-					val_ins = {};
-				}
-			elseif k.op.type == 'var' then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
+				};
+				val_ins = {};
+			}
+		end;
+		var = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
 					};
-					val_ins = {};
-				}
-			elseif k.op.type == 'str' then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
+				};
+				val_ins = {};
+			}
+		end;
+		str = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
 					};
-					val_ins = {};
-				}
-			elseif k.op.type == 'apply' then
-				local val_ins = {
-					n = 0;
-				}
+				};
+				val_ins = {};
+			}
+		end;
+		apply = function(k)
+			local val_ins = {
+				n = 0;
+			}
+			util.push(val_ins, {
+				k = k.op.fn;
+			})
+			for i = 1, k.op.args.n do
 				util.push(val_ins, {
-					k = k.op.fn;
+					k = k.op.args[i];
 				})
-				for i = 1, k.op.args.n do
-					util.push(val_ins, {
-						k = k.op.args[i];
-					})
-				end
-				return {
-					flow_outs = {
-						closed = false;
-						{
-							k = k.op.k;
-						};
-					};
-					val_ins = val_ins;
-				}
-			elseif k.op.type == 'define' then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
-					};
-					val_ins = {
-						{
-							k = k.op.value;
-						};
-					};
-				}
-			elseif k.op.type == lua_i then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
-					};
-					val_ins = {};
-				}
-			elseif k.op.type == lambda_i then
-				return {
-					flow_outs = {
-						closed = true;
-						{
-							k = k.op.k;
-						};
-						{
-							k = k.op.entry_k;
-						};
-					};
-					val_ins = {};
-				}
-			else
-				error('TODO: ' .. util.pp_sym(k.op.type))
 			end
-		else
-			error 'bad'
-		end
-	end;
+			return {
+				flow_outs = {
+					closed = false;
+					{
+						k = k.op.k;
+					};
+				};
+				val_ins = val_ins;
+			}
+		end;
+		define = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
+					};
+				};
+				val_ins = {
+					{
+						k = k.op.value;
+					};
+				};
+			}
+		end;
+		[lua_i] = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
+					};
+				};
+				val_ins = {};
+			}
+		end;
+		[lambda_i] = function(k)
+			return {
+				flow_outs = {
+					closed = true;
+					{
+						k = k.op.k;
+					};
+					{
+						k = k.op.entry_k;
+					};
+				};
+				val_ins = {};
+			}
+		end;
+		[return_i] = function(k)
+			return {
+				flow_outs = { closed = false; };
+				val_ins = { { k = k.op.args; }; };
+			}
+		end;
+	};
 }
 
 local code_env = {}
@@ -142,10 +147,10 @@ code_env.extern = setmetatable({
 	macro_t = macro_t;
 	fn_t = fn_t;
 	call_ctx_t = call_ctx_t;
-	continuations = continuations;
 	reify_i = reify_i;
 	lambda_i = lambda_i;
 	return_i = return_i;
+	continuations = continuations;
 }, {
 	__index = function(self, key)
 		error('bad: ' .. key)
