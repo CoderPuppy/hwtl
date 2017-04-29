@@ -303,19 +303,13 @@ return function(opts)
 
 	function resolve._fold_constants(k, typ)
 		local consts = {n = 0}
-		for in_k in pairs(k.ins) do
-			if not in_k.op then error 'TODO' end
-			if in_k.op.type == 'var' and in_k.op.var.type == 'const' then
-				-- TODO: are the constaints for constant folding the same (or tighter) as for reording evaluation?
-				local const = resolve._fold_constants(in_k.op.var.out_k, typ)
-				if const then
-					util.push(consts, const)
-				end
-			elseif opts.constant_folding_rules[in_k.op.type] then
-				local const = opts.constant_folding_rules[in_k.op.type](resolve._fold_constants, in_k, k, typ)
-				if const then
-					util.push(consts, const)
-				end
+		-- TODO: all the incoming paths may not have appeared yet
+		for in_k, links in pairs(k.flow_ins) do
+			local const = opts.constant_folding_rules[in_k.op.type]
+			if not const then error('need a constant folding rule for ' .. util.pp_sym(in_k.op.type)) end
+			local const = const(resolve._fold_constants, in_k, k, typ)
+			if const then
+				util.push(consts, const)
 			end
 		end
 		if consts.n == 0 then

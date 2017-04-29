@@ -178,6 +178,12 @@ const_rules = {
 			error(res)
 		end
 	end;
+	var = function(rec, k, out_k, typ)
+		if k.op.var.type == 'const' then
+			-- TODO: check that the variable can be used here
+			return rec(k.op.var.out_k, typ)
+		end
+	end;
 }
 const_rules_ap = {
 }
