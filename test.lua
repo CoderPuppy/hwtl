@@ -67,3 +67,253 @@ while true do
 		error('unhandled status: ' .. s)
 	end
 end
+
+-- print 'digraph {'
+-- require './test/graphviz'.pp_k(ks[1])
+-- print '}'
+
+-- CODEGEN
+
+local trees_k = {}
+
+local function ensure_inside(i, o)
+	if trees_k[o] then o = trees_k[o] end
+	if not i or i.flow_outs then error 'TODO: i' end
+	if not o or o.flow_outs then error 'TODO: o' end
+	if i == o then return end
+	i.inside[o] = true
+	local ok, res
+	if i.parent then
+		ok, res = pcall(ensure_inside, i.parent, o)
+	else
+		ok = false
+	end
+	if not ok then
+		local msg = 'codegen: ' .. i.name .. ' isn\'t inside ' .. o.name
+		if res then
+			msg = res .. '\n  ' .. msg
+		end
+		error(msg)
+	end
+end
+
+local function deepest_common_ancestor(...)
+	assert(select('#', ...) > 0)
+	local level = 0
+	local trees = { n = select('#', ...); }
+	for i = 1, trees.n do
+		trees[i] = select(i, ...)
+		level = math.max(level, trees[i].level)
+	end
+	while level > 0 do
+		local eq = true
+		for i = 2, trees.n do
+			if trees[i] ~= trees[1] then
+				eq = false
+				break
+			end
+		end
+		if eq then
+			return trees[1]
+		end
+		for i = 1, trees.n do
+			if trees[i].level == level then
+				trees[i] = trees[i].parent
+			end
+		end
+		level = level - 1
+	end
+	local eq = true
+	for i = 2, trees.n do
+		if trees[i].parent ~= trees[1].parent then
+			eq = false
+			break
+		end
+	end
+	assert(eq and trees[1].parent.root)
+	return trees[1].parent
+end
+
+local function move(child, parent)
+	if child.parent == parent then return end
+	for inside in pairs(child.inside) do
+		ensure_inside(parent, inside)
+	end
+	child.parent.children[child] = nil
+	child.parent = parent
+	child.level = parent.level + 1
+	parent.children[child] = true
+end
+
+local function ensure_accessible(accessee, accessor)
+	local ancestor = deepest_common_ancestor(accessee.parent, accessor)
+	move(accessee, ancestor)
+end
+
+local function explore_k(k, parent)
+	assert(k)
+	local tree = trees_k[k]
+	if tree then
+		ensure_accessible(tree, parent)
+		tree.uses[parent] = true
+	else
+		tree = {
+			name = k.name;
+			k = k;
+			parent = parent;
+			level = parent.level + 1;
+			inside = {};
+			children = {};
+			uses = setmetatable({ [parent] = true; }, {
+				__len = function(self)
+					local n = 0
+					for use in pairs(self) do
+						n = n + 1
+					end
+					return n
+				end;
+			});
+		}
+		parent.children[tree] = true
+		trees_k[k] = tree
+		if not k.op then
+			error('unbuilt continuation: ' .. k.name)
+		end
+		for out_k, link in pairs(k.flow_outs) do
+			explore_k(out_k, tree)
+		end
+		for in_k, link in pairs(k.val_ins) do
+			ensure_inside(tree, in_k)
+		end
+		if k.op.type == 'var' then
+			if k.op.var.intro_k then
+				ensure_inside(tree, k.op.var.intro_k)
+			end
+			if k.op.var.type == 'pure' then
+				explore_k(k.op.var.in_k, tree).pure_var = k.op.var
+			end
+		elseif k.op.type == 'if' then
+		elseif k.op.type == 'str' then
+		elseif k.op.type == 'apply' then
+		elseif k.op.type == 'exit' then
+		elseif k.op.type == types.lua_i then
+		elseif k.op.type == 'define' then
+		else
+			error('unhandled operation type: ' .. util.pp_sym(k.op.type))
+		end
+	end
+	return tree
+end
+local function tree_k(k)
+	return assert(trees_k[k])
+end
+local root = {
+	root = true;
+	name = 'root';
+	level = 0;
+	inside = {};
+	children = {};
+}
+local tree = explore_k(ks[1], root)
+local pure_vars_done = {}
+local indent = ''
+local names = {}
+local generate_op, generate_goto, generate_k, generate_k_
+function generate_k_(tree)
+	print('function(...)')
+	print(indent .. '  local r<id> = table.pack(...)')
+	local old_indent = indent
+	indent = indent .. '  '
+	generate_op(tree)
+	indent = old_indent
+	io.write(indent .. 'end')
+end
+function generate_k(tree)
+	if #tree.uses > 1 then
+		io.write('k<id>')
+	else
+		generate_k_(tree)
+	end
+end
+function generate_goto(tree, ...)
+	if #tree.uses <= 1 then
+		io.write(indent .. 'local r<id> = table.pack(')
+		for i = 1, select('#', ...) do
+			if i ~= 1 then
+				io.write ', '
+			end
+			io.write(select(i, ...))
+		end
+		print ')'
+		generate_op(tree)
+	else
+		io.write(indent .. 'return k<id>(')
+		for i = 1, select('#', ...) do
+			if i ~= 1 then
+				io.write ', '
+			end
+			io.write(select(i, ...))
+		end
+		print ')'
+	end
+end
+function generate_op(tree)
+	-- TODO: handle mutually recursive variables
+	for child in pairs(tree.children) do
+		if child.pure_var and not pure_vars_done[child] then
+			pure_vars_done[child] = true
+			return generate_op(child)
+		end
+	end
+	if tree.k.op.type == 'define' and tree.k.op.var.type == 'pure' then
+		return generate_op(trees_k[tree.k.op.var.in_k].parent)
+	end
+
+	for child in pairs(tree.children) do
+		if not child.pure_var and #child.uses > 1 then
+			io.write(indent .. 'local k<id> = ')
+			generate_k_(child)
+			print()
+		end
+	end
+
+	if tree.k.op.type == types.lua_i then
+		local deindent = tree.k.op.str:match '^%s*'
+		local str = ''
+		local first = true
+		for line in tree.k.op.str:gsub('\r\n', '\n'):gsub('\n\r', '\n'):gmatch '([^\n\r]*)[\n\r]' do
+			if not first then
+				str = str .. indent
+			end
+			str = str .. line:gsub('^' .. deindent, ''):gsub('\t', '  ') .. '\n'
+			first = false
+		end
+		str = str:sub(1, -2)
+		generate_goto(tree_k(tree.k.op.k), str)
+	elseif tree.k.op.type == 'var' then
+		generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
+	elseif tree.k.op.type == 'if' then
+		local old_indent = indent
+		indent = indent .. '  '
+		print(old_indent .. 'if r<id>[1] then')
+		generate_goto(tree_k(tree.k.op.true_k))
+		print(old_indent .. 'else')
+		generate_goto(tree_k(tree.k.op.false_k))
+		print(old_indent .. 'end')
+		indent = old_indent
+	elseif tree.k.op.type == 'str' then
+		generate_goto(tree_k(tree.k.op.k), ('%q'):format(tree.k.op.str):gsub('\\\n', '\\n'))
+	elseif tree.k.op.type == 'apply' then
+		io.write(indent .. 'return r<id>[1](')
+		generate_k(tree_k(tree.k.op.k))
+		for _, arg in ipairs(tree.k.op.args) do
+			io.write(', r<id>')
+		end
+		print(')')
+	elseif tree.k.op.type == 'exit' then
+		print(indent .. 'return')
+	else
+		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
+	end
+end
+generate_op(tree)
