@@ -123,11 +123,13 @@ local function push(tbl, ...)
 end
 
 local function remove_idx(tbl, i)
+	local val = tbl[i]
 	tbl.n = tbl.n - 1
 	for i = i, tbl.n do
 		tbl[i] = tbl[i + 1]
 	end
 	tbl[tbl.n + 1] = nil
+	return val
 end
 
 local function pp_sym(sym)

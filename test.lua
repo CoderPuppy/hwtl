@@ -234,6 +234,9 @@ local function explore_k(k, parent)
 		elseif k.op.type == 'exit' then
 		elseif k.op.type == types.lua_i then
 		elseif k.op.type == 'define' then
+			if k.op.var.type == 'pure' then
+				ensure_inside(tree, k.op.var.in_k)
+			end
 		else
 			error('unhandled operation type: ' .. util.pp_sym(k.op.type))
 		end
@@ -284,7 +287,6 @@ local function print_tree(tree, indent)
 	end
 end
 print_tree(tree, '')
-local pure_vars_done = {}
 local indent = ''
 local names = {}
 local generate_op, generate_goto, generate_k, generate_k_
@@ -326,18 +328,168 @@ function generate_goto(tree, ...)
 		print ')'
 	end
 end
-function generate_op(tree)
-	-- TODO: handle references to mutable variables (by duplicating the definition)
-	-- TODO: handle mutually recursive variables
-	for child in pairs(tree.children) do
-		if child.pure_var and not pure_vars_done[child] then
-			pure_vars_done[child] = true
-			return generate_op(child)
+local pure_var_depss = {}
+local function pure_var_deps(pure_var)
+	if pure_var_depss[pure_var] then return pure_var_depss[pure_var] end
+	local deps = {}
+	pure_var_depss[pure_var] = deps
+	local done = {}
+	local queue = {n = 1; pure_var.in_k;}
+	while queue.n > 0 do
+		local k = util.remove_idx(queue, queue.n)
+		for out_k in pairs(k.flow_outs) do
+			if not done[out_k] then
+				util.push(queue, out_k)
+				done[out_k] = true
+			end
+		end
+		if k.op.type == 'var' and k.op.var.type == 'pure' then
+			deps[k.op.var] = true
 		end
 	end
+	return deps
+end
+local pure_var_datas = {}
+function generate_op(tree)
+	-- TODO: handle references to mutable variables (by duplicating the definition)
+	local pure_var_data = pure_var_datas[tree]
+	if not pure_var_data then
+		-- split the variables into mutually dependent subsets (called mutual blocks)
+		local mutual_blocks = {}
+		local pure_vars = {}
+		pure_var_data = {
+			mutual_blocks = mutual_blocks;
+			pure_vars = pure_vars;
+		}
+		pure_var_datas[tree] = pure_var_data
+		-- generate a mutual block for each variable
+		for child in pairs(tree.children) do
+			if child.pure_var then
+				local mutual_block = {
+					elements = { [child.pure_var] = true; };
+					outs = {};
+					ins = {};
+					one = true;
+				}
+				mutual_blocks[mutual_block] = true
+				pure_vars[child.pure_var] = mutual_block
+			end
+		end
+		-- figure out dependencies between the mutual blocks
+		for mutual_block in pairs(mutual_blocks) do
+			for pure_var in pairs(mutual_block.elements) do
+				for pure_var_ in pairs(pure_var_deps(pure_var)) do
+					local mutual_block_ = pure_vars[pure_var_]
+					if mutual_block_ then
+						mutual_block.outs[mutual_block_] = true
+						mutual_block_.ins[mutual_block] = true
+					end
+				end
+			end
+		end
+		-- merge mutual dependent mutual blocks
+		while true do
+			local work = false
+			for mutual_block in pairs(mutual_blocks) do
+				for mutual_block_ in pairs(mutual_block.outs) do
+					if mutual_block.ins[mutual_block_] then
+						mutual_block.ins[mutual_block_] = nil
+						mutual_block.outs[mutual_block_] = nil
+						mutual_block_.ins[mutual_block] = nil
+						mutual_block_.outs[mutual_block] = nil
+						mutual_blocks[mutual_block_] = nil
+						for pure_var in pairs(mutual_block_.elements) do
+							mutual_block.elements[pure_var] = true
+							pure_vars[pure_var] = mutual_block
+						end
+						for mutual_block__ in pairs(mutual_block_.outs) do
+							mutual_block.outs[mutual_block__] = true
+							mutual_block__.ins[mutual_block_] = nil
+							mutual_block__.ins[mutual_block] = true
+						end
+						for mutual_block__ in pairs(mutual_block_.ins) do
+							mutual_block.ins[mutual_block__] = true
+							mutual_block__.outs[mutual_block_] = nil
+							mutual_block__.outs[mutual_block] = true
+						end
+						mutual_block.one = false
+						work = true
+						break
+					end
+				end
+				if work then break end
+			end
+			if not work then break end
+		end
+		-- for mutual_block in pairs(mutual_blocks) do
+		-- 	print(mutual_block)
+		-- 	if mutual_block.one then
+		-- 		print('  one')
+		-- 	end
+		-- 	print('  elements:')
+		-- 	for pure_var in pairs(mutual_block.elements) do
+		-- 		print('    ' .. resolve.pp_var(pure_var))
+		-- 	end
+		-- 	print('  dependencies:')
+		-- 	for dep in pairs(mutual_block.outs) do
+		-- 		print('    ' .. tostring(dep))
+		-- 	end
+		-- end
+	end
+	while true do
+		local all_built = true
+		for mutual_block in pairs(pure_var_data.mutual_blocks) do
+			repeat
+				-- generate mutual blocks if they haven't been built yet and all their dependencies have been
+				if mutual_block.built then break end
+				local all_deps = true
+				for dep in pairs(mutual_block.outs) do
+					if not dep.built then
+						all_deps = false
+						break
+					end
+				end
+				if not all_deps then
+					all_built = false
+					break
+				end
+
+				mutual_block.built = true
+				if mutual_block.one then
+					return generate_op(tree_k(next(mutual_block.elements).in_k))
+				else
+					for pure_var in pairs(mutual_block.elements) do
+						print(indent .. 'local ' .. pure_var.name .. '_lazy, ' .. pure_var.name .. '_val, ' .. pure_var.name .. '_set, ' .. pure_var.name .. '_started')
+					end
+					for pure_var in pairs(mutual_block.elements) do
+						print(indent .. pure_var.name .. '_lazy = function(k)')
+						local old_indent = indent
+						indent = indent .. '  '
+						print(indent .. 'if ' .. pure_var.name .. '_started then error \'bad\' end')
+						print(indent .. pure_var.name .. '_started = true')
+						generate_op(tree_k(pure_var.in_k))
+						indent = old_indent
+						print(indent .. 'end')
+					end
+				end
+			until true
+		end
+		if all_built then break end
+	end
 	if tree.k.op.type == 'define' and tree.k.op.var.type == 'pure' then
-		print(indent .. tree.k.op.var.name .. ' = r<id>')
-		return generate_op(trees_k[tree.k.op.var.in_k].parent)
+		local var_tree = tree_k(tree.k.op.var.in_k)
+		local par_tree = var_tree.parent
+		local mutual_block = pure_var_datas[par_tree].pure_vars[tree.k.op.var]
+		if mutual_block.one then
+			print(indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>')
+			return generate_op(par_tree)
+		else
+			print(indent .. 'if ' .. tree.k.op.var.name .. '_set then error \'bad\' end')
+			print(indent .. tree.k.op.var.name .. '_val = r<id>')
+			print(indent .. tree.k.op.var.name .. '_set = true')
+			print(indent .. 'return ' .. tree.k.op.var.name .. '_k(' .. tree.k.op.var.name .. '_val)')
+			return
+		end
 	end
 
 	for child in pairs(tree.children) do
@@ -360,9 +512,18 @@ function generate_op(tree)
 			first = false
 		end
 		str = str:sub(1, -2)
-		generate_goto(tree_k(tree.k.op.k), str)
+		generate_goto(tree_k(tree.k.op.k), 'lua')
 	elseif tree.k.op.type == 'var' then
-		generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
+		if tree.k.op.var.type == 'pure' and not pure_var_datas[tree_k(tree.k.op.var.in_k).parent].pure_vars[tree.k.op.var].one then
+			print(indent .. 'return ' .. tree.k.op.var.name .. '_lazy(function(...)')
+			local old_indent = indent
+			indent = indent .. '  '
+			generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name .. '_val')
+			indent = old_indent
+			print(indent .. 'end)')
+		else
+			generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
+		end
 	elseif tree.k.op.type == 'if' then
 		local old_indent = indent
 		indent = indent .. '  '
