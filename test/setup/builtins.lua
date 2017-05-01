@@ -348,7 +348,16 @@ define('log!', {
 		{
 			type = extern.types.fn_t;
 			fn = function(k, ...)
-				return k(print(...))
+				for i = 1, select('#', ...) do
+					local v = select(i, ...)
+					io.write(util.pp_sym(v.type))
+					if v.type == extern.types.num_t then
+						print(': ' .. v.value)
+					else
+						print()
+					end
+				end
+				return k()
 			end;
 		}
 	]];
