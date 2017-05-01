@@ -146,8 +146,34 @@ local function move(child, parent)
 end
 
 local function ensure_accessible(accessee, accessor)
+	-- TODO: I don't fully understand this code
 	local ancestor = deepest_common_ancestor(accessee.parent, accessor)
-	move(accessee, ancestor)
+	do
+		local tree_ = accessor
+		while tree_ ~= ancestor do
+			accessee.use_ins[tree_] = true
+			tree_.use_outs[accessee] = true
+			tree_ = tree_.parent
+		end
+	end
+	if ancestor ~= accessee.parent then
+		move(accessee, ancestor)
+		local new_uses = {}
+		for use in pairs(accessee.use_ins) do
+			local tree_ = use
+			while tree_ ~= ancestor do
+				tree_.use_outs[accessee] = true
+				new_uses[tree_] = true
+				tree_ = tree_.parent
+			end
+		end
+		for use in pairs(new_uses) do
+			accessee.use_ins[use] = true
+		end
+		for use in pairs(accessee.use_outs) do
+			ensure_accessible(use, accessee)
+		end
+	end
 end
 
 local function explore_k(k, parent)
@@ -155,7 +181,6 @@ local function explore_k(k, parent)
 	local tree = trees_k[k]
 	if tree then
 		ensure_accessible(tree, parent)
-		tree.uses[parent] = true
 	else
 		tree = {
 			name = k.name;
@@ -164,7 +189,16 @@ local function explore_k(k, parent)
 			level = parent.level + 1;
 			inside = {};
 			children = {};
-			uses = setmetatable({ [parent] = true; }, {
+			use_outs = setmetatable({}, {
+				__len = function(self)
+					local n = 0
+					for use in pairs(self) do
+						n = n + 1
+					end
+					return n
+				end;
+			});
+			use_ins = setmetatable({}, {
 				__len = function(self)
 					local n = 0
 					for use in pairs(self) do
@@ -174,6 +208,8 @@ local function explore_k(k, parent)
 				end;
 			});
 		}
+		parent.use_outs[tree] = true
+		tree.use_ins[parent] = true
 		parent.children[tree] = true
 		trees_k[k] = tree
 		if not k.op then
@@ -213,8 +249,41 @@ local root = {
 	level = 0;
 	inside = {};
 	children = {};
+	use_outs = setmetatable({}, {
+		__len = function(self)
+			local n = 0
+			for use in pairs(self) do
+				n = n + 1
+			end
+			return n
+		end;
+	});
+	use_ins = setmetatable({}, {
+		__len = function(self)
+			local n = 0
+			for use in pairs(self) do
+				n = n + 1
+			end
+			return n
+		end;
+	});
 }
 local tree = explore_k(ks[1], root)
+local function print_tree(tree, indent)
+	print(indent .. '- ' .. tree.name)
+	print(indent .. '  op: ' .. util.pp_sym(tree.k.op.type))
+	if tree.pure_var then
+		print(indent .. '  pure variable: ' .. resolve.pp_var(tree.pure_var))
+	end
+	if tree.k.op.type == 'var' then
+		print(indent .. '  variable: ' .. resolve.pp_var(tree.k.op.var))
+	end
+	print(indent .. '  children:')
+	for child in pairs(tree.children) do
+		print_tree(child, indent .. '    ')
+	end
+end
+print_tree(tree, '')
 local pure_vars_done = {}
 local indent = ''
 local names = {}
@@ -229,14 +298,14 @@ function generate_k_(tree)
 	io.write(indent .. 'end')
 end
 function generate_k(tree)
-	if #tree.uses > 1 then
+	if #tree.use_ins > 1 then
 		io.write('k<id>')
 	else
 		generate_k_(tree)
 	end
 end
 function generate_goto(tree, ...)
-	if #tree.uses <= 1 then
+	if #tree.use_ins <= 1 then
 		io.write(indent .. 'local r<id> = table.pack(')
 		for i = 1, select('#', ...) do
 			if i ~= 1 then
@@ -258,6 +327,7 @@ function generate_goto(tree, ...)
 	end
 end
 function generate_op(tree)
+	-- TODO: handle references to mutable variables (by duplicating the definition)
 	-- TODO: handle mutually recursive variables
 	for child in pairs(tree.children) do
 		if child.pure_var and not pure_vars_done[child] then
@@ -266,11 +336,12 @@ function generate_op(tree)
 		end
 	end
 	if tree.k.op.type == 'define' and tree.k.op.var.type == 'pure' then
+		print(indent .. tree.k.op.var.name .. ' = r<id>')
 		return generate_op(trees_k[tree.k.op.var.in_k].parent)
 	end
 
 	for child in pairs(tree.children) do
-		if not child.pure_var and #child.uses > 1 then
+		if not child.pure_var and #child.use_ins > 1 then
 			io.write(indent .. 'local k<id> = ')
 			generate_k_(child)
 			print()

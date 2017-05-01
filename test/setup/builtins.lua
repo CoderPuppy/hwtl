@@ -57,8 +57,8 @@ define('define', {
 					}
 					if typ == 'pure' then
 						var.namespace = ctx.namespace
-						var.in_k = extern.continuations.new('TODO: var pure in_k')
-						var.out_k = extern.continuations.new('TODO: var pure out_k')
+						var.in_k = extern.continuations.new('TODO: var pure in_k: ' .. extern.resolve.pp_var(var))
+						var.out_k = extern.continuations.new('TODO: var pure out_k: ' .. extern.resolve.pp_var(var))
 						var.out_k.op = {
 							type = 'define';
 							var = var;
