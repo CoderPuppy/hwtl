@@ -544,6 +544,9 @@ function generate_op(tree)
 		print(')')
 	elseif tree.k.op.type == 'exit' then
 		print(indent .. 'return')
+	elseif tree.k.op.type == 'define' then
+		print(indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>[1]')
+		generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
 	else
 		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
 	end
