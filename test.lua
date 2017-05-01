@@ -287,17 +287,21 @@ local function print_tree(tree, indent)
 	end
 end
 print_tree(tree, '')
-local indent = ''
-local names = {}
+local state = {
+	indent = '';
+	names = {};
+}
 local generate_op, generate_goto, generate_k, generate_k_
 function generate_k_(tree)
 	print('function(...)')
-	print(indent .. '  local r<id> = table.pack(...)')
-	local old_indent = indent
-	indent = indent .. '  '
+	print(state.indent .. '  local r<id> = table.pack(...)')
+	local old_state = state
+	state = util.xtend({}, state, {
+		indent = state.indent .. '  ';
+	})
 	generate_op(tree)
-	indent = old_indent
-	io.write(indent .. 'end')
+	state = old_state
+	io.write(state.indent .. 'end')
 end
 function generate_k(tree)
 	if #tree.use_ins > 1 then
@@ -308,7 +312,7 @@ function generate_k(tree)
 end
 function generate_goto(tree, ...)
 	if #tree.use_ins <= 1 then
-		io.write(indent .. 'local r<id> = table.pack(')
+		io.write(state.indent .. 'local r<id> = table.pack(')
 		for i = 1, select('#', ...) do
 			if i ~= 1 then
 				io.write ', '
@@ -318,7 +322,7 @@ function generate_goto(tree, ...)
 		print ')'
 		generate_op(tree)
 	else
-		io.write(indent .. 'return k<id>(')
+		io.write(state.indent .. 'return k<id>(')
 		for i = 1, select('#', ...) do
 			if i ~= 1 then
 				io.write ', '
@@ -459,17 +463,19 @@ function generate_op(tree)
 					return generate_op(tree_k(next(mutual_block.elements).in_k))
 				else
 					for pure_var in pairs(mutual_block.elements) do
-						print(indent .. 'local ' .. pure_var.name .. '_lazy, ' .. pure_var.name .. '_val, ' .. pure_var.name .. '_set, ' .. pure_var.name .. '_started')
+						print(state.indent .. 'local ' .. pure_var.name .. '_lazy, ' .. pure_var.name .. '_val, ' .. pure_var.name .. '_set, ' .. pure_var.name .. '_started')
 					end
 					for pure_var in pairs(mutual_block.elements) do
-						print(indent .. pure_var.name .. '_lazy = function(k)')
-						local old_indent = indent
-						indent = indent .. '  '
-						print(indent .. 'if ' .. pure_var.name .. '_started then error \'bad\' end')
-						print(indent .. pure_var.name .. '_started = true')
+						print(state.indent .. pure_var.name .. '_lazy = function(k)')
+						local old_state = state
+						state = util.xtend({}, state, {
+							indent = state.indent .. '  ';
+						})
+						print(state.indent .. 'if ' .. pure_var.name .. '_started then error \'bad\' end')
+						print(state.indent .. pure_var.name .. '_started = true')
 						generate_op(tree_k(pure_var.in_k))
-						indent = old_indent
-						print(indent .. 'end')
+						state = old_state
+						print(state.indent .. 'end')
 					end
 				end
 			until true
@@ -481,20 +487,20 @@ function generate_op(tree)
 		local par_tree = var_tree.parent
 		local mutual_block = pure_var_datas[par_tree].pure_vars[tree.k.op.var]
 		if mutual_block.one then
-			print(indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>')
+			print(state.indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>')
 			return generate_op(par_tree)
 		else
-			print(indent .. 'if ' .. tree.k.op.var.name .. '_set then error \'bad\' end')
-			print(indent .. tree.k.op.var.name .. '_val = r<id>')
-			print(indent .. tree.k.op.var.name .. '_set = true')
-			print(indent .. 'return ' .. tree.k.op.var.name .. '_k(' .. tree.k.op.var.name .. '_val)')
+			print(state.indent .. 'if ' .. tree.k.op.var.name .. '_set then error \'bad\' end')
+			print(state.indent .. tree.k.op.var.name .. '_val = r<id>')
+			print(state.indent .. tree.k.op.var.name .. '_set = true')
+			print(state.indent .. 'return ' .. tree.k.op.var.name .. '_k(' .. tree.k.op.var.name .. '_val)')
 			return
 		end
 	end
 
 	for child in pairs(tree.children) do
 		if not child.pure_var and #child.use_ins > 1 then
-			io.write(indent .. 'local k<id> = ')
+			io.write(state.indent .. 'local k<id> = ')
 			generate_k_(child)
 			print()
 		end
@@ -506,7 +512,7 @@ function generate_op(tree)
 		local first = true
 		for line in tree.k.op.str:gsub('\r\n', '\n'):gsub('\n\r', '\n'):gmatch '([^\n\r]*)[\n\r]' do
 			if not first then
-				str = str .. indent
+				str = str .. state.indent
 			end
 			str = str .. line:gsub('^' .. deindent, ''):gsub('\t', '  ') .. '\n'
 			first = false
@@ -515,37 +521,41 @@ function generate_op(tree)
 		generate_goto(tree_k(tree.k.op.k), 'lua')
 	elseif tree.k.op.type == 'var' then
 		if tree.k.op.var.type == 'pure' and not pure_var_datas[tree_k(tree.k.op.var.in_k).parent].pure_vars[tree.k.op.var].one then
-			print(indent .. 'return ' .. tree.k.op.var.name .. '_lazy(function(...)')
-			local old_indent = indent
-			indent = indent .. '  '
+			print(state.indent .. 'return ' .. tree.k.op.var.name .. '_lazy(function(...)')
+			local old_state = state
+			state = util.xtend({}, state, {
+				indent = state.indent .. '  ';
+			})
 			generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name .. '_val')
-			indent = old_indent
-			print(indent .. 'end)')
+			state = old_state
+			print(state.indent .. 'end)')
 		else
 			generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
 		end
 	elseif tree.k.op.type == 'if' then
-		local old_indent = indent
-		indent = indent .. '  '
-		print(old_indent .. 'if r<id>[1] then')
+		local old_state = state
+		state = util.xtend({}, state, {
+			indent = state.indent .. '  ';
+		})
+		print(old_state.indent .. 'if r<id>[1] then')
 		generate_goto(tree_k(tree.k.op.true_k))
-		print(old_indent .. 'else')
+		print(old_state.indent .. 'else')
 		generate_goto(tree_k(tree.k.op.false_k))
-		print(old_indent .. 'end')
-		indent = old_indent
+		print(old_state.indent .. 'end')
+		state = old_state
 	elseif tree.k.op.type == 'str' then
 		generate_goto(tree_k(tree.k.op.k), ('%q'):format(tree.k.op.str):gsub('\\\n', '\\n'))
 	elseif tree.k.op.type == 'apply' then
-		io.write(indent .. 'return r<id>[1](')
+		io.write(state.indent .. 'return r<id>[1](')
 		generate_k(tree_k(tree.k.op.k))
 		for _, arg in ipairs(tree.k.op.args) do
 			io.write(', r<id>')
 		end
 		print(')')
 	elseif tree.k.op.type == 'exit' then
-		print(indent .. 'return')
+		print(state.indent .. 'return')
 	elseif tree.k.op.type == 'define' then
-		print(indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>[1]')
+		print(state.indent .. 'local ' .. tree.k.op.var.name .. ' = r<id>[1]')
 		generate_goto(tree_k(tree.k.op.k), tree.k.op.var.name)
 	else
 		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
