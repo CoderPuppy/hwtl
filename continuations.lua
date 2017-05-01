@@ -1,6 +1,21 @@
 local pl = require 'pl.import_into' ()
 local util = require './util'
 
+local function new_conns()
+	return setmetatable({}, {
+		__index = function(self, key) local t = {}; self[key] = t; return t end;
+		__len = function(self)
+			local n = 0
+			for k, links in pairs(self) do
+				for link in pairs(links) do
+					n = n + 1
+				end
+			end
+			return n
+		end;
+	})
+end
+
 return function(opts)
 	local continuations = {}
 
@@ -8,10 +23,10 @@ return function(opts)
 	function continuations.new(name)
 		local data = {
 			name = name;
-			flow_ins  = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
-			flow_outs = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
-			val_ins   = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
-			val_outs  = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; });
+			flow_ins  = new_conns();
+			flow_outs = new_conns();
+			val_ins   = new_conns();
+			val_outs  = new_conns();
 		}
 		local fns = {}
 		local node = {}
@@ -23,8 +38,8 @@ return function(opts)
 			for in_k in pairs(node.val_ins) do
 				in_k.val_outs[node] = {}
 			end
-			data.flow_outs = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
-			data.val_ins   = setmetatable({}, { __index = function(self, key) local t = {}; self[key] = t; return t end; })
+			data.flow_outs = new_conns()
+			data.val_ins   = new_conns()
 			local rule = opts.link_rules[node.op.type]
 			assert(rule, 'continuation#gen_links: unhandled operation type: ' .. util.pp_sym(node.op.type))
 			local links = rule(node)
@@ -41,7 +56,7 @@ return function(opts)
 			__index = function(_, key)
 				if fns[key] then
 					return fns[key]
-				elseif key == 'op' or key == 'flow_ins' or key == 'flow_outs' or key == 'val_outs' or key == 'val_ins' then
+				elseif key == 'op' or key == 'flow_ins' or key == 'flow_outs' or key == 'val_outs' or key == 'val_ins' or key == 'name' then
 					return data[key]
 				else
 					error('TODO: get ' .. key)
