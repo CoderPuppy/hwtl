@@ -216,9 +216,41 @@ end
 function expr()
 	noneOf { '#;' }
 	return choose {
+		function() -- block string
+			local start = get_pos()
+			exact '['
+			local level = 0
+			while try(exact, '=') do
+				level = level + 1
+			end
+			exact '['
+			local s = ''
+			while true do
+				local c = try(function()
+					noneOf { ']' .. ('='):rep(level) .. ']' }
+					return pull(1)
+				end)
+				if c then
+					s = s .. c
+				else
+					break
+				end
+			end
+			exact(']' .. ('='):rep(level) .. ']')
+			return {
+				type = 'str';
+				pos = {
+					type = 'parsed';
+					src = get_src();
+					start = start;
+					stop = get_pos();
+				};
+				str = s;
+			}
+		end;
 		function() -- list
 			local start = get_pos()
-			exact '('
+			local bracket = oneOf { '[', '{', '(' }
 			local res = {
 				type = 'list';
 				pos = {
@@ -251,7 +283,15 @@ function expr()
 				res.tail = expr()
 			end
 			while try(space) do end
-			exact ')'
+			if bracket == '[' then
+				exact ']'
+			elseif bracket == '{' then
+				exact '}'
+			elseif bracket == '(' then
+				exact ')'
+			else
+				error 'bad'
+			end
 			res.pos.stop = get_pos()
 			return res
 		end;
@@ -393,38 +433,6 @@ function expr()
 				end
 			end
 			exact '"'
-			return {
-				type = 'str';
-				pos = {
-					type = 'parsed';
-					src = get_src();
-					start = start;
-					stop = get_pos();
-				};
-				str = s;
-			}
-		end;
-		function() -- block string
-			local start = get_pos()
-			exact '['
-			local level = 0
-			while try(exact, '=') do
-				level = level + 1
-			end
-			exact '['
-			local s = ''
-			while true do
-				local c = try(function()
-					noneOf { ']' .. ('='):rep(level) .. ']' }
-					return pull(1)
-				end)
-				if c then
-					s = s .. c
-				else
-					break
-				end
-			end
-			exact(']' .. ('='):rep(level) .. ']')
 			return {
 				type = 'str';
 				pos = {
