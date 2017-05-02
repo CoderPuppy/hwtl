@@ -237,6 +237,8 @@ local function explore_k(k, parent)
 			if k.op.var.type == 'pure' then
 				ensure_inside(tree, k.op.var.in_k)
 			end
+		elseif k.op.type == types.return_i then
+		elseif k.op.type == types.lambda_i then
 		else
 			error('unhandled operation type: ' .. util.pp_sym(k.op.type))
 		end
@@ -354,6 +356,9 @@ local function var_name(var)
 	return name
 end
 local generate_op, generate_goto, generate_k, generate_k_
+-- TODO: refactor
+-- TODO: fancy stuff with number of values given or expected
+-- TODO: drop stuff (result definitions, pure variables?) when it's not needed
 function generate_k_(tree)
 	print('function(...)')
 	print(state.indent .. '  local r_' .. k_name(tree.k) .. ' = table.pack(...)')
@@ -562,7 +567,12 @@ function generate_op(tree)
 
 	for child in pairs(tree.children) do
 		if not child.pure_var and #child.use_ins > 1 then
-			io.write(state.indent .. 'local k_' .. k_name(child.k) .. ' = ')
+			print(state.indent .. 'local k_' .. k_name(child.k))
+		end
+	end
+	for child in pairs(tree.children) do
+		if not child.pure_var and #child.use_ins > 1 then
+			io.write(state.indent .. 'k_' .. k_name(child.k) .. ' = ')
 			generate_k_(child)
 			print()
 		end
@@ -595,23 +605,23 @@ function generate_op(tree)
 			generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var))
 		end
 	elseif tree.k.op.type == 'if' then
-		print(old_state.indent .. 'if r_' .. k_name(tree.k.op.cond) .. '[1] then')
+		print(state.indent .. 'if r_' .. k_name(tree.k.op.cond) .. '[1] then')
 		local old_state = state
 		state = util.xtend({}, state, {
 			indent = state.indent .. '  ';
 		})
 		generate_goto(tree_k(tree.k.op.true_k))
 		state = old_state
-		print(old_state.indent .. 'else')
+		print(state.indent .. 'else')
 		local old_state = state
 		state = util.xtend({}, state, {
 			indent = state.indent .. '  ';
 		})
 		generate_goto(tree_k(tree.k.op.false_k))
 		state = old_state
-		print(old_state.indent .. 'end')
+		print(state.indent .. 'end')
 	elseif tree.k.op.type == 'str' then
-		generate_goto(tree_k(tree.k.op.k), ('%q'):format(tree.k.op.str):gsub('\\\n', '\\n'))
+		generate_goto(tree_k(tree.k.op.k), '{ type = extern.types.str_t; value = ' .. ('%q'):format(tree.k.op.str):gsub('\\\n', '\\n') .. '; }')
 	elseif tree.k.op.type == 'apply' then
 		io.write(state.indent .. 'return r_' .. k_name(tree.k.op.fn) .. '[1].fn(')
 		generate_k(tree_k(tree.k.op.k))
@@ -624,6 +634,8 @@ function generate_op(tree)
 	elseif tree.k.op.type == 'define' then
 		print(state.indent .. 'local ' .. var_name(tree.k.op.var) .. ' = r_' .. k_name(tree.k.op.value) .. '[1]')
 		generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var))
+	elseif tree.k.op.type == types.return_i then
+		print(state.indent .. 'return util.remove_idx(returns, returns.n)(util.unpack(r_' .. k_name(tree.k.op.args) .. '))')
 	else
 		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
 	end

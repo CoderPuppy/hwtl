@@ -268,7 +268,7 @@ define('while', {
 					for i = 1, ks.n - 1 do
 						ks[i] = extern.continuations.new('while body.' .. i)
 					end
-					ks[ks.n] = if_k
+					ks[ks.n] = ctx.k
 
 					local nss = { n = ctx.args.n; } -- one more than the number of expressions
 					nss[1] = ctx.out_ns
