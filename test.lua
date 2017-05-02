@@ -544,12 +544,13 @@ function generate_op(tree)
 						output(state.indent .. 'local ' .. var_name(pure_var) .. '_lazy, ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set, ' .. var_name(pure_var) .. '_started\n')
 					end
 					for pure_var in pairs(mutual_block.elements) do
-						output(state.indent .. var_name(pure_var) .. '_lazy = function(k)\n')
+						output(state.indent .. var_name(pure_var) .. '_lazy = function(' .. var_name(pure_var) .. '_k)\n')
 						local old_state = state
 						state = util.xtend({}, state, {
 							indent = state.indent .. '  ';
 							names = util.xtend({}, state.names);
 						})
+						output(state.indent .. 'if ' .. var_name(pure_var) .. '_set then return ' .. var_name(pure_var) .. '_k(' .. var_name(pure_var) .. '_val) end\n')
 						output(state.indent .. 'if ' .. var_name(pure_var) .. '_started then error \'bad\' end\n')
 						output(state.indent .. var_name(pure_var) .. '_started = true\n')
 						generate_op(tree_k(pure_var.in_k))
