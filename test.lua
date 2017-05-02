@@ -238,6 +238,7 @@ local function explore_k(k, parent)
 				ensure_inside(tree, k.op.var.in_k)
 			end
 		elseif k.op.type == types.return_i then
+			ensure_inside(tree, k.op.lambda)
 		elseif k.op.type == types.lambda_i then
 		else
 			error('unhandled operation type: ' .. util.pp_sym(k.op.type))
@@ -335,8 +336,8 @@ local function uniq_name(name)
 end
 local function gen_anon()
 	local name = state.next_anon
-	state.next_anon = state.next_anon:gsub('^([^z]?)(z*)$', function(h, t)
-		return (h and string.char(h:byte() + 1) or 'a') .. ('a'):rep(#t)
+	state.next_anon = state.next_anon:gsub('([^z]?)(z*)$', function(h, t)
+		return (#h > 0 and string.char(h:byte() + 1) or 'a') .. ('a'):rep(#t)
 	end)
 	return name
 end
@@ -355,48 +356,50 @@ local function var_name(var)
 	var_names[var] = name
 	return name
 end
+local output = io.write
 local generate_op, generate_goto, generate_k, generate_k_
 -- TODO: refactor
 -- TODO: fancy stuff with number of values given or expected
 -- TODO: drop stuff (result definitions, pure variables?) when it's not needed
 function generate_k_(tree)
-	print('function(...)')
-	print(state.indent .. '  local r_' .. k_name(tree.k) .. ' = table.pack(...)')
+	output('function(...)\n')
+	output(state.indent .. '  local r_' .. k_name(tree.k) .. ' = table.pack(...)\n')
 	local old_state = state
 	state = util.xtend({}, state, {
 		indent = state.indent .. '  ';
+		names = util.xtend({}, state.names);
 	})
 	generate_op(tree)
 	state = old_state
-	io.write(state.indent .. 'end')
+	output(state.indent .. 'end')
 end
 function generate_k(tree)
 	if #tree.use_ins > 1 then
-		io.write('k_' .. k_name(tree.k))
+		output('k_' .. k_name(tree.k))
 	else
 		generate_k_(tree)
 	end
 end
 function generate_goto(tree, ...)
 	if #tree.use_ins <= 1 then
-		io.write(state.indent .. 'local r_' .. k_name(tree.k) .. ' = table.pack(')
+		output(state.indent .. 'local r_' .. k_name(tree.k) .. ' = table.pack(')
 		for i = 1, select('#', ...) do
 			if i ~= 1 then
-				io.write ', '
+				output ', '
 			end
-			io.write(select(i, ...))
+			output(select(i, ...))
 		end
-		print ')'
+		output ')\n'
 		generate_op(tree)
 	else
-		io.write(state.indent .. 'return k_' .. k_name(tree.k) .. '(')
+		output(state.indent .. 'return k_' .. k_name(tree.k) .. '(')
 		for i = 1, select('#', ...) do
 			if i ~= 1 then
-				io.write ', '
+				output ', '
 			end
-			io.write(select(i, ...))
+			output(select(i, ...))
 		end
-		print ')'
+		output ')\n'
 	end
 end
 local pure_var_depss = {}
@@ -452,8 +455,12 @@ function generate_op(tree)
 				for pure_var_ in pairs(pure_var_deps(pure_var)) do
 					local mutual_block_ = pure_vars[pure_var_]
 					if mutual_block_ then
-						mutual_block.outs[mutual_block_] = true
-						mutual_block_.ins[mutual_block] = true
+						if mutual_block_ == mutual_block then
+							mutual_block.self_recursive = true
+						else
+							mutual_block.outs[mutual_block_] = true
+							mutual_block_.ins[mutual_block] = true
+						end
 					end
 				end
 			end
@@ -527,22 +534,27 @@ function generate_op(tree)
 
 				mutual_block.built = true
 				if mutual_block.one then
+					local pure_var = next(mutual_block.elements)
+					if mutual_block.self_recursive then
+						output(state.indent .. 'local ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set\n')
+					end
 					return generate_op(tree_k(next(mutual_block.elements).in_k))
 				else
 					for pure_var in pairs(mutual_block.elements) do
-						print(state.indent .. 'local ' .. var_name(pure_var) .. '_lazy, ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set, ' .. var_name(pure_var) .. '_started')
+						output(state.indent .. 'local ' .. var_name(pure_var) .. '_lazy, ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set, ' .. var_name(pure_var) .. '_started\n')
 					end
 					for pure_var in pairs(mutual_block.elements) do
-						print(state.indent .. var_name(pure_var) .. '_lazy = function(k)')
+						output(state.indent .. var_name(pure_var) .. '_lazy = function(k)\n')
 						local old_state = state
 						state = util.xtend({}, state, {
 							indent = state.indent .. '  ';
+							names = util.xtend({}, state.names);
 						})
-						print(state.indent .. 'if ' .. var_name(pure_var) .. '_started then error \'bad\' end')
-						print(state.indent .. var_name(pure_var) .. '_started = true')
+						output(state.indent .. 'if ' .. var_name(pure_var) .. '_started then error \'bad\' end\n')
+						output(state.indent .. var_name(pure_var) .. '_started = true\n')
 						generate_op(tree_k(pure_var.in_k))
 						state = old_state
-						print(state.indent .. 'end')
+						output(state.indent .. 'end\n')
 					end
 				end
 			until true
@@ -553,28 +565,31 @@ function generate_op(tree)
 		local var_tree = tree_k(tree.k.op.var.in_k)
 		local par_tree = var_tree.parent
 		local mutual_block = pure_var_datas[par_tree].pure_vars[tree.k.op.var]
+		if not mutual_block.one or mutual_block.self_recursive then
+			output(state.indent .. 'if ' .. var_name(tree.k.op.var) .. '_set then error \'bad\' end\n')
+			output(state.indent .. var_name(tree.k.op.var) .. '_val = r_' .. k_name(tree.k) .. '[1]\n')
+			output(state.indent .. var_name(tree.k.op.var) .. '_set = true\n')
+		elseif mutual_block.one then
+			output(state.indent .. 'local ' .. var_name(tree.k.op.var) .. ' = r_' .. k_name(tree.k) .. '[1]\n')
+		end
 		if mutual_block.one then
-			print(state.indent .. 'local ' .. var_name(tree.k.op.var) .. ' = r_' .. k_name(tree.k) .. '[1]')
 			return generate_op(par_tree)
 		else
-			print(state.indent .. 'if ' .. var_name(tree.k.op.var) .. '_set then error \'bad\' end')
-			print(state.indent .. var_name(tree.k.op.var) .. '_val = r_' .. k_name(tree.k) .. '[1]')
-			print(state.indent .. var_name(tree.k.op.var) .. '_set = true')
-			print(state.indent .. 'return ' .. var_name(tree.k.op.var) .. '_k(' .. var_name(tree.k.op.var) .. '_val)')
+			output(state.indent .. 'return ' .. var_name(tree.k.op.var) .. '_k(' .. var_name(tree.k.op.var) .. '_val)\n')
 			return
 		end
 	end
 
 	for child in pairs(tree.children) do
 		if not child.pure_var and #child.use_ins > 1 then
-			print(state.indent .. 'local k_' .. k_name(child.k))
+			output(state.indent .. 'local k_' .. k_name(child.k) .. '\n')
 		end
 	end
 	for child in pairs(tree.children) do
 		if not child.pure_var and #child.use_ins > 1 then
-			io.write(state.indent .. 'k_' .. k_name(child.k) .. ' = ')
+			output(state.indent .. 'k_' .. k_name(child.k) .. ' = ')
 			generate_k_(child)
-			print()
+			output '\n'
 		end
 	end
 
@@ -592,55 +607,85 @@ function generate_op(tree)
 		str = str:sub(1, -2)
 		generate_goto(tree_k(tree.k.op.k), str)
 	elseif tree.k.op.type == 'var' then
-		if tree.k.op.var.type == 'pure' and not pure_var_datas[tree_k(tree.k.op.var.in_k).parent].pure_vars[tree.k.op.var].one then
-			print(state.indent .. 'return ' .. var_name(tree.k.op.var) .. '_lazy(function(...)')
+		local mutual_block = tree.k.op.var.type == 'pure' and pure_var_datas[tree_k(tree.k.op.var.in_k).parent].pure_vars[tree.k.op.var]
+		if tree.k.op.var.type == 'pure' and not mutual_block.one then
+			output(state.indent .. 'return ' .. var_name(tree.k.op.var) .. '_lazy(function(...)\n')
 			local old_state = state
 			state = util.xtend({}, state, {
 				indent = state.indent .. '  ';
+				names = util.xtend({}, state.names);
 			})
 			generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var) .. '_val')
 			state = old_state
-			print(state.indent .. 'end)')
+			output(state.indent .. 'end)\n')
+		elseif tree.k.op.var.type == 'pure' and mutual_block.one and mutual_block.self_recursive then
+			output(state.indent .. 'assert(' .. var_name(tree.k.op.var) .. '_set)\n')
+			generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var) .. '_val')
 		else
 			generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var))
 		end
 	elseif tree.k.op.type == 'if' then
-		print(state.indent .. 'if r_' .. k_name(tree.k.op.cond) .. '[1] then')
+		output(state.indent .. 'if r_' .. k_name(tree.k.op.cond) .. '[1] then\n')
 		local old_state = state
 		state = util.xtend({}, state, {
 			indent = state.indent .. '  ';
+			names = util.xtend({}, state.names);
 		})
 		generate_goto(tree_k(tree.k.op.true_k))
 		state = old_state
-		print(state.indent .. 'else')
+		output(state.indent .. 'else\n')
 		local old_state = state
 		state = util.xtend({}, state, {
 			indent = state.indent .. '  ';
+			names = util.xtend({}, state.names);
 		})
 		generate_goto(tree_k(tree.k.op.false_k))
 		state = old_state
-		print(state.indent .. 'end')
+		output(state.indent .. 'end\n')
 	elseif tree.k.op.type == 'str' then
 		generate_goto(tree_k(tree.k.op.k), '{ type = extern.types.str_t; value = ' .. ('%q'):format(tree.k.op.str):gsub('\\\n', '\\n') .. '; }')
 	elseif tree.k.op.type == 'apply' then
-		io.write(state.indent .. 'return r_' .. k_name(tree.k.op.fn) .. '[1].fn(')
+		output(state.indent .. 'return r_' .. k_name(tree.k.op.fn) .. '[1].fn(')
 		generate_k(tree_k(tree.k.op.k))
 		for _, arg in ipairs(tree.k.op.args) do
-			io.write(', util.unpack(r_' .. k_name(arg) .. ')')
+			output(', util.unpack(r_' .. k_name(arg) .. ')')
 		end
-		print(')')
+		output(')\n')
 	elseif tree.k.op.type == 'exit' then
-		print(state.indent .. 'return')
+		output(state.indent .. 'return\n')
 	elseif tree.k.op.type == 'define' then
-		print(state.indent .. 'local ' .. var_name(tree.k.op.var) .. ' = r_' .. k_name(tree.k.op.value) .. '[1]')
+		output(state.indent .. 'local ' .. var_name(tree.k.op.var) .. ' = r_' .. k_name(tree.k.op.value) .. '[1]\n')
 		generate_goto(tree_k(tree.k.op.k), var_name(tree.k.op.var))
 	elseif tree.k.op.type == types.return_i then
-		print(state.indent .. 'return util.remove_idx(returns, returns.n)(util.unpack(r_' .. k_name(tree.k.op.args) .. '))')
+		output(state.indent .. 'return ret_' .. k_name(tree.k.op.lambda) .. '(util.unpack(r_' .. k_name(tree.k.op.args) .. '))\n')
+	elseif tree.k.op.type == types.lambda_i then
+		local str = ''
+		local old_output = output
+		output = function(str_)
+			str = str .. str_
+		end
+		local old_state = state
+		state = util.xtend({}, state, {
+			indent = state.indent .. '  ';
+			names = util.xtend({}, state.names);
+		})
+		output('{ type = extern.types.fn_t; fn = function(ret_' .. k_name(tree.k))
+		for i, arg in ipairs(tree.k.op.args) do
+			output(', ' .. var_name(arg))
+		end
+		output(')\n')
+		generate_op(tree_k(tree.k.op.entry_k))
+		output(old_state.indent .. 'end; }')
+		output = old_output
+		state = old_state
+		generate_goto(tree_k(tree.k.op.k), str)
 	else
 		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
 	end
 end
-print [[local require = require 'nsrq' ()]]
-print [[local extern = require './test/code-env'.extern]]
-print [[local util = require './util']]
+output [[
+local require = require 'nsrq' ()
+local extern = require './test/code-env'.extern
+local util = require './util'
+]]
 generate_op(tree)
