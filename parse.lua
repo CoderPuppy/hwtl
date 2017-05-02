@@ -259,8 +259,16 @@ function expr()
 			local start = get_pos()
 			noneOf { '#\'', '#`', ',', '\'', '`', '@' }
 			local function char()
-				noneOf {'#|', ';', '(', ')', '[', ']', '{', '}', '\n', '\r', ' ', '\t', '"'}
-				return pull(1)
+				return choose {
+					function()
+						exact '\\'
+						return pull(1)
+					end;
+					function()
+						noneOf {'#|', ';', '(', ')', '[', ']', '{', '}', '\n', '\r', ' ', '\t', '"', '\\'}
+						return pull(1)
+					end;
+				}
 			end
 			local s = char()
 			while true do

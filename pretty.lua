@@ -20,7 +20,7 @@ local function pretty(sexp, st)
 		s = s .. ')'
 		return s
 	elseif sexp.type == 'sym' then
-		return sexp.name
+		return sexp.name:gsub('%s', '\\%1')
 	elseif sexp.type == 'str' then
 		return ('%q'):format(sexp.str)
 	else
