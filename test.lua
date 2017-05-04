@@ -5,17 +5,14 @@ local util = require './util'
 
 -- print('----]] Parsing')
 local h = io.open('test.lisp', 'r')
-local parse = require './parse'
-local res = parse.match {
-	handle = h;
-	src ='test.lisp';
-	fn = parse.main;
-	args = table.pack('hi');
-}
+local parse = require './parse2'
+local sexps, err = parse('test.lisp', h)
+if not sexps then
+	error(err)
+end
 h:close()
-local sexps = res.vals[1]
 
--- print(pl.pretty.write(res))
+-- print(pl.pretty.write(sexps))
 for _, sexp in ipairs(sexps) do
 	-- print(pretty(sexp))
 end
