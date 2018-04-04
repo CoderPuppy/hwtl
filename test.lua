@@ -32,9 +32,10 @@ local resolve = require './test/resolve'
 -- print('----]] Resolving')
 local builtins = require './test/setup/builtins'
 local ground = resolve.namespace('ground'); do
-	ground.add_entry(function(name, complete_ref)
-		return resolve.resolve_var(builtins, name, complete_ref)
-	end)
+	ground.imports[builtins] = true
+	-- ground.add_entry(function(name, complete_ref)
+	-- 	return resolve.resolve_var(builtins, name, complete_ref)
+	-- end)
 end
 local ks = {n = sexps.n + 1}
 for i = 1, sexps.n + 1 do
@@ -44,9 +45,10 @@ ks[ks.n].op = { type = 'exit'; }
 local nss = {n = sexps.n + 1}
 for i = 1, sexps.n + 1 do
 	nss[i] = resolve.namespace('test.' .. tostring(i))
-	nss[i].add_entry(function(name, complete_ref)
-		return resolve.resolve_var(ground, name, complete_ref)
-	end)
+	nss[i].imports[ground] = true
+	-- nss[i].add_entry(function(name, complete_ref)
+	-- 	return resolve.resolve_var(ground, name, complete_ref)
+	-- end)
 end
 local jobs = {}
 for i, sexp in ipairs(sexps) do

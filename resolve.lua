@@ -104,6 +104,8 @@ return function(opts)
 	function resolve.namespace(name)
 		local namespace = {
 			name = name;
+			imports = {};
+			defines = {};
 		}
 		local entries = {n = 0}
 		namespace.entries = setmetatable({}, {
@@ -167,21 +169,44 @@ return function(opts)
 	end
 
 	function resolve.resolve_var(namespace, name, parent_complete_ref)
-		local i = 0
+		local namespaces = { [namespace] = 0; }
 		local race = resolve.race(parent_complete_ref)
 		while true do
-			if namespace.entries.n > i then
-				for j = i + 1, namespace.entries.n do
-					util.push(race.jobs, resolve.spawn(
-						'resolve.resolve_var(' .. namespace.name .. ', ' .. ('%q'):format(name) .. ')',
-						namespace.entries[j], name, race.complete_ref
-					))
-				end
-				i = namespace.entries.n
-			end
 			local waits = resolve.waits()
-			waits.vars[namespace][name] = true
-			waits.namespace_entries[namespace] = true
+			local done = false
+			while true do
+				local new = {}
+				for namespace, i in pairs(namespaces) do
+					for namespace_ in pairs(namespace.imports) do
+						if not namespaces[namespace_] then
+							new[namespace_] = true
+						end
+					end
+					if namespace.defines[name] then
+						race.found(namespace.defines[name])
+						done = true
+						break
+					end
+					if namespace.entries.n > i then
+						for j = i + 1, namespace.entries.n do
+							util.push(race.jobs, resolve.spawn(
+								'resolve.resolve_var(' .. namespace.name .. ', ' .. ('%q'):format(name) .. ')',
+								namespace.entries[j], name, race.complete_ref
+							))
+						end
+						namespaces[namespace] = namespace.entries.n
+					end
+					waits.vars[namespace][name] = true
+					waits.namespace_entries[namespace] = true
+				end
+				local any = false
+				for namespace in pairs(new) do
+					any = true
+					namespaces[namespace] = 0
+				end
+				if not any then break end
+			end
+			if done then break end
 			if race.run(waits) then break end
 		end
 		race.done()
@@ -199,6 +224,7 @@ return function(opts)
 				name = name;
 				var = var;
 			}
+			namespace.defines[name] = var
 		end
 		return var
 	end
@@ -226,15 +252,17 @@ return function(opts)
 			}
 			k.gen_links()
 			var.uses[k] = true
-			out_ns.add_entry(function(name, complete_ref)
-				return resolve.resolve_var(in_ns, name, complete_ref)
-			end)
+			out_ns.imports[in_ns] = true
+			-- out_ns.add_entry(function(name, complete_ref)
+			-- 	return resolve.resolve_var(in_ns, name, complete_ref)
+			-- end)
 		elseif sexp.type == 'list' then
 			local fn_k = opts.continuations.new('resolve.resolve: apply.after-fn')
 			local inter_ns = resolve.namespace('resolve.resolve: apply.inter_ns')
-			inter_ns.add_entry(function(name, complete_ref)
-				return resolve.resolve_var(namespace, name, complete_ref)
-			end)
+			inter_ns.imports[namespace] = true
+			-- inter_ns.add_entry(function(name, complete_ref)
+			-- 	return resolve.resolve_var(namespace, name, complete_ref)
+			-- end)
 			resolve.resolve(namespace, sexp[1], k, fn_k, in_ns, inter_ns)
 			repeat
 				local fn_const = resolve._fold_constants(fn_k)
@@ -272,9 +300,10 @@ return function(opts)
 			for i = 2, sexp.n - 1 do
 				arg_ks[i] = opts.continuations.new('resolve.resolve: apply.args.' .. tostring(i))
 				arg_nss[i] = resolve.namespace('resolve.resolve: apply.args.' .. tostring(i))
-				arg_nss[i].add_entry(function(name, complete_ref)
-					return resolve.resolve_var(namespace, name, complete_ref)
-				end)
+				arg_nss[i].imports[namespace] = true
+				-- arg_nss[i].add_entry(function(name, complete_ref)
+				-- 	return resolve.resolve_var(namespace, name, complete_ref)
+				-- end)
 			end
 			for i = 1, sexp.n - 1 do
 				resolve.spawn('resolve.resolve: apply.args.' .. i, resolve.resolve, namespace, sexp[i + 1], arg_ks[i], arg_ks[i + 1], arg_nss[i], arg_nss[i + 1])
