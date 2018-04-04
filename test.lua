@@ -1,3 +1,4 @@
+local very_start = os.clock()
 local require = require('nsrq')()
 local pretty = require './pretty'
 local pl = require 'pl.import_into' ()
@@ -6,10 +7,13 @@ local util = require './util'
 -- print('----]] Parsing')
 local h = io.open('test.lisp', 'r')
 local parse = require './parse2'
+local start = os.clock()
 local sexps, err = parse('test.lisp', h)
 if not sexps then
 	error(err)
 end
+local stop = os.clock()
+-- print('parse', stop - start)
 h:close()
 
 -- print(pl.pretty.write(sexps))
@@ -49,6 +53,7 @@ for i, sexp in ipairs(sexps) do
 	jobs[i] = resolve.spawn('test.' .. tostring(i), resolve.resolve, ground, sexp, ks[i], ks[i + 1], nss[i], nss[i + 1])
 end
 local co = util.create_co('test', resolve.run)
+local start = os.clock()
 while true do
 	local res = table.pack(coroutine.resume(co))
 	local s = coroutine.status(co)
@@ -64,6 +69,8 @@ while true do
 		error('unhandled status: ' .. s)
 	end
 end
+local stop = os.clock()
+-- print('resolve', stop - start)
 
 -- print 'digraph {'
 -- require './test/graphviz'.pp_k(ks[1])
@@ -271,7 +278,11 @@ local root = {
 		end;
 	});
 }
+local start = os.clock()
 local tree = explore_k(ks[1], root)
+local stop = os.clock()
+-- print('explore', stop - start)
+-- tree.print('')
 local function print_tree(tree, indent)
 	print(indent .. '- ' .. tree.name)
 	print(indent .. '  op: ' .. util.pp_sym(tree.k.op.type))
@@ -354,6 +365,7 @@ local function var_name(var)
 	return name
 end
 local output = io.write
+-- local output = function() end
 local generate_op, generate_goto, generate_k, generate_k_
 -- TODO: refactor
 -- TODO: fancy stuff with number of values given or expected
@@ -681,9 +693,13 @@ function generate_op(tree)
 		error('unhandled operation type: ' .. util.pp_sym(tree.k.op.type))
 	end
 end
+local start = os.clock()
 output [[
 local require = require 'nsrq' ()
 local extern = require './test/code-env'.extern
 local util = require './util'
 ]]
 generate_op(tree)
+local stop = os.clock()
+-- print('generate', stop - start)
+-- print('whole', stop - very_start)
