@@ -1,6 +1,7 @@
 local resolve = require '../resolve'
 local continuations = require '../continuations'
 local types = require '../types'
+require '.'
 
 local builtins = resolve.namespace('builtins')
 local function define(name, op)

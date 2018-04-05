@@ -3,10 +3,22 @@ local require = require('nsrq')()
 local pretty = require './pretty'
 local pl = require 'pl.import_into' ()
 local util = require './util'
+local types = require './test/types'
+local continuations = require './test/continuations'
+local code_env = require './test/code-env'
+local resolve = require './test/resolve'
+local parse = require './parse'
+local builtins = require './test/setup/builtins'
+local treeify = require './test/codegen/treeify'
+local generate = require './test/codegen/lua' {
+	output = io.write;
+	-- output = function() end;
+}
+
+require './test/setup'
 
 -- print('----]] Parsing')
 local h = io.open('test.lisp', 'r')
-local parse = require './parse'
 local start = os.clock()
 local sexps, err = parse('test.lisp', h)
 if not sexps then
@@ -22,15 +34,7 @@ for _, sexp in ipairs(sexps) do
 end
 -- print()
 
-require './test/setup'
-
-local types = require './test/types'
-local continuations = require './test/continuations'
-local code_env = require './test/code-env'
-local resolve = require './test/resolve'
-
 -- print('----]] Resolving')
-local builtins = require './test/setup/builtins'
 local ground = resolve.namespace('ground'); do
 	ground.imports[builtins] = true
 end
@@ -65,6 +69,7 @@ while true do
 		error('unhandled status: ' .. s)
 	end
 end
+-- TODO: check uniq_vars
 local stop = os.clock()
 -- print('resolve', stop - start)
 
@@ -74,19 +79,13 @@ local stop = os.clock()
 
 -- CODEGEN
 
-local treeify = require './test/codegen/treeify'
 local start = os.clock()
 local tree = treeify.explore(ks[1], root)
 local stop = os.clock()
 -- print('explore', stop - start)
 -- tree.print('')
-local output = io.write
--- local output = function() end
-local generate = require './test/codegen/lua' {
-	output = output;
-}
 local start = os.clock()
-output [[
+io.write [[
 local require = require 'nsrq' ()
 local extern = require './test/code-env'.extern
 local util = require './util'
