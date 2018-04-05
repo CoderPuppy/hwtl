@@ -6,7 +6,7 @@ local util = require './util'
 
 -- print('----]] Parsing')
 local h = io.open('test.lisp', 'r')
-local parse = require './parse2'
+local parse = require './parse'
 local start = os.clock()
 local sexps, err = parse('test.lisp', h)
 if not sexps then
@@ -33,9 +33,6 @@ local resolve = require './test/resolve'
 local builtins = require './test/setup/builtins'
 local ground = resolve.namespace('ground'); do
 	ground.imports[builtins] = true
-	-- ground.add_entry(function(name, complete_ref)
-	-- 	return resolve.resolve_var(builtins, name, complete_ref)
-	-- end)
 end
 local ks = {n = sexps.n + 1}
 for i = 1, sexps.n + 1 do
@@ -46,9 +43,6 @@ local nss = {n = sexps.n + 1}
 for i = 1, sexps.n + 1 do
 	nss[i] = resolve.namespace('test.' .. tostring(i))
 	nss[i].imports[ground] = true
-	-- nss[i].add_entry(function(name, complete_ref)
-	-- 	return resolve.resolve_var(ground, name, complete_ref)
-	-- end)
 end
 local jobs = {}
 for i, sexp in ipairs(sexps) do

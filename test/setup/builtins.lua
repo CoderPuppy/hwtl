@@ -24,11 +24,6 @@ local function define(name, op)
 	}
 	out_k.gen_links()
 	builtins.defines[name] = var
-	-- builtins.add_entry(function(name_)
-	-- 	if name_ == name then
-	-- 		return var
-	-- 	end
-	-- end)
 end
 define('define', {
 	type = types.lua_i;
@@ -89,16 +84,8 @@ define('define', {
 						extern.resolve.resolve, ctx.namespace, ctx.args[ctx.args.n], var.in_k, var.out_k, ctx.in_ns, extern.resolve.namespace('define out_ns')
 					)
 					var.namespace.defines[name] = var
-					-- var.namespace.add_entry(function(name_)
-					-- 	if name_ == name then
-					-- 		return var
-					-- 	end
-					-- end)
 
 					ctx.out_ns.imports[ctx.in_ns] = true
-					-- ctx.out_ns.add_entry(function(name, complete_ref)
-					-- 	return extern.resolve.resolve_var(ctx.in_ns, name, complete_ref)
-					-- end)
 
 					return k()
 				end;
@@ -124,9 +111,6 @@ define('lambda', {
 					local namespace = extern.resolve.namespace(ctx.namespace.name .. '/lambda');
 
 					namespace.imports[ctx.namespace] = true
-					-- namespace.add_entry(function(name, complete_ref)
-					-- 	return extern.resolve.resolve_var(ctx.namespace, name, complete_ref)
-					-- end)
 
 					local ret_k = extern.continuations.new('lambda return')
 					local ks = {
@@ -147,11 +131,6 @@ define('lambda', {
 							intro_k = ks[1];
 						}
 						namespace.defines[args[i].name] = args[i]
-						-- namespace.add_entry(function(name_)
-						-- 	if name_ == args[i].name then
-						-- 		return args[i]
-						-- 	end
-						-- end)
 					end
 
 					local nss = {
@@ -161,9 +140,6 @@ define('lambda', {
 					for i = 2, ctx.args.n do
 						nss[i] = extern.resolve.namespace('lambda.body.' .. i - 1)
 						nss[i].imports[namespace] = true
-						-- nss[i].add_entry(function(name, complete_ref)
-						-- 	return extern.resolve.resolve_var(namespace, name, complete_ref)
-						-- end)
 					end
 					for i = 2, ctx.args.n do
 						extern.resolve.spawn('lambda.body.' .. i - 1, extern.resolve.resolve, namespace, ctx.args[i], ks[i - 1], ks[i], nss[i - 1], nss[i])
@@ -186,9 +162,6 @@ define('lambda', {
 					ctx.k.gen_links()
 
 					ctx.out_ns.imports[ctx.in_ns] = true
-					-- ctx.out_ns.add_entry(function(name, complete_ref)
-					-- 	return extern.resolve.resolve_var(ctx.in_ns, name, complete_ref)
-					-- end)
 					return k()
 				end;
 			};
@@ -282,9 +255,6 @@ define('while', {
 					for i = 2, nss.n do
 						nss[i] = extern.resolve.namespace('while body.' .. i)
 						nss[i].imports[ctx.namespace] = true
-						-- nss[i].add_entry(function(name, complete_ref)
-						-- 	return extern.resolve.resolve_var(ctx.namespace, name, complete_ref)
-						-- end)
 					end
 
 					if_k.op = {
@@ -462,11 +432,6 @@ do
 			out_k.gen_links()
 			self[i] = var
 			builtins.defines[var.name] = var
-			-- builtins.add_entry(function(name_)
-			-- 	if name_ == var.name then
-			-- 		return var
-			-- 	end
-			-- end)
 			return var
 		end;
 	})
