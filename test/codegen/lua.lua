@@ -1,7 +1,7 @@
 local types = require '../types'
 local treeify = require './treeify'
 local util = require '../../util'
-
+local resolve = require '../resolve'
 
 return function(opts)
 	local state = {
@@ -118,22 +118,18 @@ return function(opts)
 		end
 	end
 	local pure_var_depss = {}
-	local function pure_var_deps(pure_var)
-		if pure_var_depss[pure_var] then return pure_var_depss[pure_var] end
+	local function pure_var_deps(tree)
+		if pure_var_depss[tree] then return pure_var_depss[tree] end
 		local deps = {}
-		pure_var_depss[pure_var] = deps
-		local done = {}
-		local queue = {n = 1; pure_var.in_k;}
+		pure_var_depss[tree] = deps
+		local queue = {n = 1; tree;}
 		while queue.n > 0 do
-			local k = util.remove_idx(queue, queue.n)
-			for out_k in pairs(k.flow_outs) do
-				if not done[out_k] then
-					util.push(queue, out_k)
-					done[out_k] = true
-				end
+			local tree_ = util.remove_idx(queue, queue.n)
+			if tree_.k.op.type == 'var' and tree_.k.op.var.type == 'pure' then
+				deps[tree_.k.op.var] = true
 			end
-			if k.op.type == 'var' and k.op.var.type == 'pure' then
-				deps[k.op.var] = true
+			for child in pairs(tree_.children) do
+				util.push(queue, child)
 			end
 		end
 		return deps
@@ -145,30 +141,31 @@ return function(opts)
 		if not pure_var_data then
 			-- split the variables into mutually dependent subsets (called mutual blocks)
 			local mutual_blocks = {}
-			local pure_vars = {}
+			local index = {}
 			pure_var_data = {
 				mutual_blocks = mutual_blocks;
-				pure_vars = pure_vars;
+				index = index;
 			}
 			pure_var_datas[tree] = pure_var_data
 			-- generate a mutual block for each variable
 			for child in pairs(tree.children) do
 				if child.pure_var then
 					local mutual_block = {
-						elements = { [child.pure_var] = true; };
+						elements = { [child] = true; };
 						outs = {};
 						ins = {};
 						one = true;
 					}
 					mutual_blocks[mutual_block] = true
-					pure_vars[child.pure_var] = mutual_block
+					index[child] = mutual_block
+					index[child.pure_var] = mutual_block
 				end
 			end
 			-- figure out dependencies between the mutual blocks
 			for mutual_block in pairs(mutual_blocks) do
-				for pure_var in pairs(mutual_block.elements) do
-					for pure_var_ in pairs(pure_var_deps(pure_var)) do
-						local mutual_block_ = pure_vars[pure_var_]
+				for tree_ in pairs(mutual_block.elements) do
+					for pure_var in pairs(pure_var_deps(tree_)) do
+						local mutual_block_ = index[pure_var]
 						if mutual_block_ then
 							if mutual_block_ == mutual_block then
 								mutual_block.self_recursive = true
@@ -191,9 +188,9 @@ return function(opts)
 							mutual_block_.ins[mutual_block] = nil
 							mutual_block_.outs[mutual_block] = nil
 							mutual_blocks[mutual_block_] = nil
-							for pure_var in pairs(mutual_block_.elements) do
-								mutual_block.elements[pure_var] = true
-								pure_vars[pure_var] = mutual_block
+							for tree_ in pairs(mutual_block_.elements) do
+								mutual_block.elements[tree_] = true
+								pure_vars[tree_] = mutual_block
 							end
 							for mutual_block__ in pairs(mutual_block_.outs) do
 								mutual_block.outs[mutual_block__] = true
@@ -220,8 +217,8 @@ return function(opts)
 			-- 		print('  one')
 			-- 	end
 			-- 	print('  elements:')
-			-- 	for pure_var in pairs(mutual_block.elements) do
-			-- 		print('    ' .. resolve.pp_var(pure_var))
+			-- 	for tree_ in pairs(mutual_block.elements) do
+			-- 		print('    ' .. resolve.pp_var(tree_.pure_var))
 			-- 	end
 			-- 	print('  dependencies:')
 			-- 	for dep in pairs(mutual_block.outs) do
@@ -249,26 +246,36 @@ return function(opts)
 
 					mutual_block.built = true
 					if mutual_block.one then
-						local pure_var = next(mutual_block.elements)
+						local tree_ = next(mutual_block.elements)
 						if mutual_block.self_recursive then
-							output(state.indent .. 'local ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set\n')
+							output(state.indent .. 'local ' ..
+								var_name(tree_.pure_var) .. '_val, ' ..
+								var_name(tree_.pure_var) .. '_set\n'
+							)
 						end
-						return generate_op(treeify.get(next(mutual_block.elements).in_k))
+						return generate_op(tree_)
 					else
-						for pure_var in pairs(mutual_block.elements) do
-							output(state.indent .. 'local ' .. var_name(pure_var) .. '_lazy, ' .. var_name(pure_var) .. '_val, ' .. var_name(pure_var) .. '_set, ' .. var_name(pure_var) .. '_started\n')
+						for tree_ in pairs(mutual_block.elements) do
+							output(state.indent .. 'local ' ..
+								var_name(tree_.pure_var) .. '_lazy, ' ..
+								var_name(tree_.pure_var) .. '_val, ' ..
+								var_name(tree_.pure_var) .. '_set, ' ..
+								var_name(tree_.pure_var) .. '_started\n'
+							)
 						end
-						for pure_var in pairs(mutual_block.elements) do
-							output(state.indent .. var_name(pure_var) .. '_lazy = function(' .. var_name(pure_var) .. '_k)\n')
+						for tree_ in pairs(mutual_block.elements) do
+							output(state.indent .. var_name(tree_.pure_var) .. '_lazy = function(' .. var_name(tree_.pure_var) .. '_k)\n')
 							local old_state = state
 							state = util.xtend({}, state, {
 								indent = state.indent .. '  ';
 								names = util.xtend({}, state.names);
 							})
-							output(state.indent .. 'if ' .. var_name(pure_var) .. '_set then return ' .. var_name(pure_var) .. '_k(' .. var_name(pure_var) .. '_val) end\n')
-							output(state.indent .. 'if ' .. var_name(pure_var) .. '_started then error \'bad\' end\n')
-							output(state.indent .. var_name(pure_var) .. '_started = true\n')
-							generate_op(treeify.get(pure_var.in_k))
+							output(state.indent .. 'if ' .. var_name(tree_.pure_var) .. '_set then ' ..
+								'return ' .. var_name(tree_.pure_var) .. '_k(' .. var_name(tree_.pure_var) .. '_val) ' ..
+							'end\n')
+							output(state.indent .. 'if ' .. var_name(tree_.pure_var) .. '_started then error \'bad\' end\n')
+							output(state.indent .. var_name(tree_.pure_var) .. '_started = true\n')
+							generate_op(tree_)
 							state = old_state
 							output(state.indent .. 'end\n')
 						end
@@ -280,7 +287,7 @@ return function(opts)
 		if tree.k.op.type == 'define' and tree.k.op.var.type == 'pure' then
 			local var_tree = treeify.get(tree.k.op.var.in_k)
 			local par_tree = var_tree.parent
-			local mutual_block = pure_var_datas[par_tree].pure_vars[tree.k.op.var]
+			local mutual_block = pure_var_datas[par_tree].index[tree.k.op.var]
 			if not mutual_block.one or mutual_block.self_recursive then
 				output(state.indent .. 'if ' .. var_name(tree.k.op.var) .. '_set then error \'bad\' end\n')
 				output(state.indent .. var_name(tree.k.op.var) .. '_val = r_' .. k_name(tree.k) .. '[1]\n')
@@ -324,7 +331,7 @@ return function(opts)
 			return generate_goto(treeify.get(tree.k.op.k), str)
 		elseif tree.k.op.type == 'var' then
 			if #tree.k.op.k.val_outs > 0 then
-				local mutual_block = tree.k.op.var.type == 'pure' and pure_var_datas[treeify.get(tree.k.op.var.in_k).parent].pure_vars[tree.k.op.var]
+				local mutual_block = tree.k.op.var.type == 'pure' and pure_var_datas[treeify.get(tree.k.op.var.in_k).parent].index[tree.k.op.var]
 				if tree.k.op.var.type == 'pure' and not mutual_block.one then
 					output(state.indent .. 'return ' .. var_name(tree.k.op.var) .. '_lazy(function(...)\n')
 					local old_state = state
