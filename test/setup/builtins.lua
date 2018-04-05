@@ -39,7 +39,7 @@ define('define', {
 			fn = {
 				type = extern.types.fn_t;
 				fn = function(k, ctx)
-					assert(ctx.type == extern.types.call_ctx_t)
+					util.assert_type(ctx, extern.types.call_ctx_t)
 					assert(ctx.args.n == 3, 'define expects three arguments')
 					assert(ctx.args[1].type == 'sym', 'define expects a symbol for the first argument')
 					assert(ctx.args[2].type == 'sym', 'define expects a symbol for the second argument')
@@ -114,7 +114,7 @@ define('lambda', {
 			fn = {
 				type = extern.types.fn_t;
 				fn = function(k, ctx)
-					assert(ctx.type == extern.types.call_ctx_t)
+					util.assert_type(ctx, extern.types.call_ctx_t)
 					assert(ctx.args.n >= 2, 'lambda expects two or more arguments')
 					assert(ctx.args[1].type == 'list', 'lambda expects a list of symbols for the first argument')
 					for i = 1, ctx.args[1].n do
@@ -205,7 +205,7 @@ define('if', {
 			fn = {
 				type = extern.types.fn_t;
 				fn = function(k, ctx)
-					assert(ctx.type == extern.types.call_ctx_t)
+					util.assert_type(ctx, extern.types.call_ctx_t)
 					assert(ctx.args.n == 3, 'if expects three arguments')
 
 					local if_k = extern.continuations.new('if')
@@ -258,7 +258,7 @@ define('while', {
 			fn = {
 				type = extern.types.fn_t;
 				fn = function(k, ctx)
-					assert(ctx.type == extern.types.call_ctx_t)
+					util.assert_type(ctx, extern.types.call_ctx_t)
 					assert(ctx.args.n >= 2, 'while expects two or more arguments')
 
 					local if_k = extern.continuations.new('while')
@@ -321,7 +321,7 @@ define('lua/tonumber', {
 		}
 	]];
 })
-define('lua/+', {
+define('+', {
 	type = types.lua_i;
 	str = [[
 		{
@@ -330,10 +330,50 @@ define('lua/+', {
 				local n = 0
 				for i = 1, select('#', ...) do
 					local n_ = select(i, ...)
-					assert(n_.type == extern.types.num_t)
+					util.assert_type(n_, extern.types.num_t)
 					n = n + n_.value
 				end
 				return k({ type = extern.types.num_t; value = n; })
+			end;
+		}
+	]];
+})
+define('<=', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.fn_t;
+			fn = function(k, ...)
+				for i = 1, select('#', ...) - 1 do
+					local n1 = select(i, ...)
+					local n2 = select(i + 1, ...)
+					util.assert_type(n1, extern.types.num_t)
+					util.assert_type(n2, extern.types.num_t)
+					if n1.value > n2.value then
+						return k({ type = extern.types.bool_t; value = false; })
+					end
+				end
+				return k({ type = extern.types.bool_t; value = true; })
+			end;
+		}
+	]];
+})
+define('=', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.fn_t;
+			fn = function(k, ...)
+				for i = 1, select('#', ...) - 1 do
+					local n1 = select(i, ...)
+					local n2 = select(i + 1, ...)
+					util.assert_type(n1, extern.types.num_t)
+					util.assert_type(n2, extern.types.num_t)
+					if n1.value ~= n2.value then
+						return k({ type = extern.types.bool_t; value = false; })
+					end
+				end
+				return k({ type = extern.types.bool_t; value = true; })
 			end;
 		}
 	]];
@@ -344,7 +384,7 @@ define('lua/io/read',  {
 		{
 			type = extern.types.fn_t;
 			fn = function(k, format)
-				assert(format.type == extern.types.str_t)
+				util.assert_type(format, extern.types.str_t)
 				return k(io.read(format.value))
 			end;
 		}
@@ -361,12 +401,32 @@ define('log!', {
 					io.write(util.pp_sym(v.type))
 					if v.type == extern.types.num_t then
 						print(': ' .. v.value)
+					elseif v.type == extern.types.str_t then
+						print(': ' .. v.value)
 					else
 						print()
 					end
 				end
 				return k()
 			end;
+		}
+	]];
+})
+define('true', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.bool_t;
+			value = true;
+		}
+	]];
+})
+define('false', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.bool_t;
+			value = false;
 		}
 	]];
 })

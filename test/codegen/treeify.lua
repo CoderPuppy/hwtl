@@ -174,11 +174,11 @@ local function explore_k(k, parent)
 end
 
 local function tree_k(k)
-	return assert(trees_k[k])
+	return (assert(trees_k[k], 'continuation not treeified: ' .. tostring(k) .. ' of type ' .. util.pp_sym(k.op.type)))
 end
 
 return {
-	get = function(k) return assert(trees_k[k]) end;
+	get = tree_k;
 	ensure_inside = ensure_inside;
 	deepest_common_ancestor = deepest_common_ancestor;
 	move = move;

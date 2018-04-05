@@ -352,7 +352,7 @@ return function(opts)
 				return generate_goto(treeify.get(tree.k.op.k))
 			end
 		elseif tree.k.op.type == 'if' then
-			output(state.indent .. 'if r_' .. k_name(tree.k.op.cond) .. '[1] then\n')
+			output(state.indent .. 'if util.assert_type(r_' .. k_name(tree.k.op.cond) .. '[1], extern.types.bool_t, \'if condition\').value then\n')
 			local old_state = state
 			state = util.xtend({}, state, {
 				indent = state.indent .. '  ';

@@ -8,4 +8,5 @@ return {
 	call_ctx_t = {name = 'call_ctx';};
 	lambda_i = {name = 'lambda';};
 	return_i = {name = 'return';};
+	bool_t = {name = 'boolean';};
 }

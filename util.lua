@@ -143,6 +143,12 @@ local function pp_sym(sym)
 	end
 end
 
+local function assert_type(v, t, msg)
+	assert(type(v) == 'table', 'expected a value')
+	assert(v.type == t, 'expected value of type ' .. pp_sym(t) .. ' got one of type ' .. pp_sym(v.type) .. (msg and ': ' .. msg or ''))
+	return v
+end
+
 return {
 	concat = concat;
 	append = append;
@@ -157,4 +163,5 @@ return {
 	push = push;
 	remove_idx = remove_idx;
 	pp_sym = pp_sym;
+	assert_type = assert_type;
 }

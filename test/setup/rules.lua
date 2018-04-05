@@ -132,7 +132,7 @@ util.xtend(rules.link_rules, {
 
 util.xtend(rules.call_rules, {
 	[types.macro_t] = function(ctx)
-		assert(ctx.fn.fn.type == types.fn_t)
+		util.assert_type(ctx.fn.fn.type, types.fn_t)
 		return ctx.fn.fn.fn(function(...) return ... end, util.xtend({ type = types.call_ctx_t; }, ctx))
 	end;
 })
