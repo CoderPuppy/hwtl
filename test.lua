@@ -89,6 +89,7 @@ io.write [[
 local require = require 'nsrq' ()
 local extern = require './test/code-env'.extern
 local util = require './util'
+local pl = require 'pl.import_into' ()
 ]]
 generate.op(tree)
 local stop = os.clock()

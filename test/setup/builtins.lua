@@ -108,6 +108,9 @@ define('lambda', {
 					for i = 1, ctx.args[1].n do
 						assert(ctx.args[1][i].type == 'sym', 'lambda expects a list of symbols for the first argument')
 					end
+					if ctx.args[1].tail then
+						assert(ctx.args[1].tail.type == 'sym', 'TODO: bad tail')
+					end
 
 					local namespace = extern.resolve.namespace(ctx.namespace.name .. '/lambda');
 
@@ -123,7 +126,7 @@ define('lambda', {
 					end
 
 					local args = {n = ctx.args[1].n}
-					for i = 1 , ctx.args[1].n do
+					for i = 1, ctx.args[1].n do
 						args[i] = {
 							type = 'arg';
 							name = ctx.args[1][i].name;
@@ -132,6 +135,16 @@ define('lambda', {
 							intro_k = ks[1];
 						}
 						namespace.defines[args[i].name] = args[i]
+					end
+					if ctx.args[1].tail then
+						args.tail = {
+							type = 'arg';
+							name = ctx.args[1].tail.name;
+							namespace = namespace;
+							uses = {};
+							intro_k = ks[1];
+						}
+						namespace.defines[args.tail.name] = args.tail
 					end
 
 					local nss = {
@@ -281,6 +294,62 @@ define('while', {
 		}
 	]];
 })
+define('quote', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.macro_t;
+			fn = {
+				type = extern.types.fn_t;
+				fn = function(k, ctx)
+					util.assert_type(ctx, extern.types.call_ctx_t)
+
+					local indent = ''
+					local function reify(sexp)
+						if sexp.type == 'list' then
+							local str = '{'
+							local old_indent = indent
+							indent = indent .. '  '
+							str = str .. '\n' .. indent .. 'type = extern.types.list_t;'
+							for i = 1, sexp.n do
+								str = str .. '\n' .. indent .. reify(sexp[i]) .. ';'
+							end
+							assert(not sexp.tail, 'TODO: tail')
+							str = str .. '\n}'
+							indent = old_indent
+							return str
+						elseif sexp.type == 'sym' then
+							return '{ type = extern.types.sym_t; value = ' .. ('%q'):format(sexp.name) .. '; }'
+						elseif sexp.type == 'str' then
+							return '{ type = extern.types.str_t; value = ' .. ('%q'):format(sexp.str) .. '; }'
+						else
+							error('unhandled type: ' .. sexp.type)
+						end
+					end
+
+					local str = ''
+					for i = 1, ctx.args.n do
+						if i ~= 1 then
+							str = str .. ', '
+						end
+						str = str .. reify(ctx.args[i])
+					end
+					assert(not ctx.args.tail, 'TODO: tail')
+					ctx.k.op = {
+						type = extern.types.lua_i;
+						str = str;
+						k = ctx.out_k;
+					}
+					ctx.k.gen_links()
+
+					ctx.out_ns.imports[ctx.in_ns] = true
+
+					return k()
+				end;
+			};
+		}
+	]];
+})
 define('lua/tonumber', {
 	type = types.lua_i;
 	str = [[
@@ -303,6 +372,23 @@ define('+', {
 					local n_ = select(i, ...)
 					util.assert_type(n_, extern.types.num_t)
 					n = n + n_.value
+				end
+				return k({ type = extern.types.num_t; value = n; })
+			end;
+		}
+	]];
+})
+define('*', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.fn_t;
+			fn = function(k, ...)
+				local n = 1
+				for i = 1, select('#', ...) do
+					local n_ = select(i, ...)
+					util.assert_type(n_, extern.types.num_t)
+					n = n * n_.value
 				end
 				return k({ type = extern.types.num_t; value = n; })
 			end;
@@ -356,7 +442,22 @@ define('lua/io/read',  {
 			type = extern.types.fn_t;
 			fn = function(k, format)
 				util.assert_type(format, extern.types.str_t)
+				-- TODO
 				return k(io.read(format.value))
+			end;
+		}
+	]];
+})
+define('unpack', {
+	type = types.lua_i;
+	str = [[
+		{
+			type = extern.types.fn_t;
+			fn = function(k, l, i, j)
+				util.assert_type(l, extern.types.list_t)
+				local i = i and util.assert_type(i, extern.types.num_t).value or 1
+				local j = j and util.assert_type(j, extern.types.num_t).value or l.n
+				return k(table.unpack(l, i, j))
 			end;
 		}
 	]];
@@ -375,7 +476,7 @@ define('log!', {
 					elseif v.type == extern.types.str_t then
 						print(': ' .. v.value)
 					else
-						print()
+						print(': ' .. pl.pretty.write(v))
 					end
 				end
 				return k()

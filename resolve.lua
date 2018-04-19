@@ -300,6 +300,7 @@ return function(opts)
 			for i = 1, sexp.n - 1 do
 				resolve.spawn('resolve.resolve: apply.args.' .. i, resolve.resolve, namespace, sexp[i + 1], arg_ks[i], arg_ks[i + 1], arg_nss[i], arg_nss[i + 1])
 			end
+			if sexp.tail then error('TODO: handle tails') end
 			ap_k.op = {
 				type = 'apply';
 				fn = fn_k;

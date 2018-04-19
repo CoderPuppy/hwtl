@@ -320,7 +320,7 @@ return function(opts)
 			local deindent = tree.k.op.str:match '^%s*'
 			local str = ''
 			local first = true
-			for line in tree.k.op.str:gsub('\r\n', '\n'):gsub('\n\r', '\n'):gmatch '([^\n\r]*)[\n\r]' do
+			for line in (tree.k.op.str .. '\n'):gsub('\r\n', '\n'):gsub('\n\r', '\n'):gmatch '([^\n\r]*)[\n\r]' do
 				if not first then
 					str = str .. state.indent
 				end
@@ -400,7 +400,14 @@ return function(opts)
 			for i, arg in ipairs(tree.k.op.args) do
 				output(', ' .. var_name(arg))
 			end
+			if tree.k.op.args.tail then
+				output ', ...'
+			end
 			output(')\n')
+			if tree.k.op.args.tail then
+				output(state.indent .. 'local ' .. var_name(tree.k.op.args.tail) .. ' = table.pack(...)\n')
+				output(state.indent .. var_name(tree.k.op.args.tail) .. '.type = extern.types.list_t\n')
+			end
 			generate_op(treeify.get(tree.k.op.entry_k))
 			output(old_state.indent .. 'end; }')
 			output = old_output
