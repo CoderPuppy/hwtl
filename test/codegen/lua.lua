@@ -49,8 +49,8 @@ return function(opts)
 	end
 	local function gen_anon()
 		local name = state.next_anon
-		state.next_anon = state.next_anon:gsub('([^z]?)(z*)$', function(h, t)
-			return (#h > 0 and string.char(h:byte() + 1) or 'a') .. ('a'):rep(#t)
+		state.next_anon = state.next_anon:gsub('^(.-)([a-y]?)(z*)$', function(pre, head, zs)
+			return pre .. (#head == 1 and string.char(head:byte() + 1) or 'a') .. ('a'):rep(#zs)
 		end)
 		return name
 	end
@@ -190,7 +190,8 @@ return function(opts)
 							mutual_blocks[mutual_block_] = nil
 							for tree_ in pairs(mutual_block_.elements) do
 								mutual_block.elements[tree_] = true
-								pure_vars[tree_] = mutual_block
+								index[tree_] = mutual_block
+								index[tree_.pure_var] = mutual_block
 							end
 							for mutual_block__ in pairs(mutual_block_.outs) do
 								mutual_block.outs[mutual_block__] = true
@@ -327,7 +328,7 @@ return function(opts)
 				str = str .. line:gsub('^' .. deindent, ''):gsub('\t', '  ') .. '\n'
 				first = false
 			end
-			str = str:sub(1, -2)
+			str = str:gsub('%s*$', '')
 			return generate_goto(treeify.get(tree.k.op.k), str)
 		elseif tree.k.op.type == 'var' then
 			if #tree.k.op.k.val_outs > 0 then

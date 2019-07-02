@@ -80,7 +80,7 @@ local stop = os.clock()
 -- CODEGEN
 
 local start = os.clock()
-local tree = treeify.explore(ks[1], root)
+local tree = treeify.explore(ks[1])
 local stop = os.clock()
 -- print('explore', stop - start)
 -- tree.print('')

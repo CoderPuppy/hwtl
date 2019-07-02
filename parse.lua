@@ -2,7 +2,7 @@ local util = require './util'
 local utf8 = utf8 or require 'lua-utf8'
 local lookahead = 2
 return function(src, h)
-	local buf = h:read(lookahead)
+	local buf = h:read(lookahead) or ''
 	local buf_ = buf
 	local pos = {
 		lin = 1;
@@ -82,7 +82,7 @@ return function(src, h)
 		end
 		sym = nil
 	end
-	while true do
+	while #buf > 0 do
 		repeat
 			-- print(buf)
 			if mode == 'sexp' then
@@ -219,6 +219,8 @@ return function(src, h)
 					last_pos = util.xtend({}, pos)
 					break
 				end
+
+				error 'bad'
 			elseif mode == 'line comment' then
 				local head, rest = buf:match '^(.)(.*)$'
 				buf = rest
@@ -294,6 +296,8 @@ return function(src, h)
 						buf = rest
 						break
 					end
+
+					error 'bad'
 				elseif submode == 'dec' then
 					if #str_temp == 3 then
 						submode = nil
@@ -312,6 +316,8 @@ return function(src, h)
 						end
 						break
 					end
+
+					error 'bad'
 				elseif submode == 'hex' then
 					local head, rest = buf:match '^([0-9a-fA-F])(.*)$'
 					if head then
@@ -350,6 +356,7 @@ return function(src, h)
 				else
 					error('unhandle string submode: ' .. tostring(submode))
 				end
+				error 'bad'
 			elseif mode == 'block string' then
 				if submode == 'start' then
 					local head, rest = buf:match '^(.)(.*)$'
@@ -400,6 +407,7 @@ return function(src, h)
 				else
 					error('unhandled block string submode: ' .. tostring(submode))
 				end
+				error 'bad'
 			else
 				error('unhandled mode: ' .. mode)
 			end

@@ -34,9 +34,14 @@ local function deepest_common_ancestor(...)
 	local trees = { n = select('#', ...); }
 	for i = 1, trees.n do
 		trees[i] = select(i, ...)
-		level = math.max(level, trees[i].level)
+		level = math.min(level, trees[i].level)
 	end
-	while level > 0 do
+	for i = 1, trees.n do
+		while trees[i].level > level do
+			trees[i] = trees[i].parent
+		end
+	end
+	while true do
 		local eq = true
 		for i = 2, trees.n do
 			if trees[i] ~= trees[1] then
@@ -47,22 +52,25 @@ local function deepest_common_ancestor(...)
 		if eq then
 			return trees[1]
 		end
-		for i = 1, trees.n do
-			if trees[i].level == level then
+		if level > 0 then
+			for i = 1, trees.n do
 				trees[i] = trees[i].parent
 			end
+			level = level - 1
+		else
+			local msg = 'codegen: no common ancestor of '
+			for i = 1, trees.n do
+				if i > 1 then
+					msg = msg .. ', '
+					if i == trees.n then
+						msg = msg .. 'and '
+					end
+				end
+				msg = msg .. trees[i].name
+			end
+			error(msg)
 		end
-		level = level - 1
 	end
-	local eq = true
-	for i = 2, trees.n do
-		if trees[i].parent ~= trees[1].parent then
-			eq = false
-			break
-		end
-	end
-	assert(eq and not trees[1].parent.parent)
-	return trees[1].parent
 end
 
 local function move(child, parent)
