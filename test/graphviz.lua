@@ -109,8 +109,10 @@ function graphviz.pp_k(k)
 			error('unhandled op type: ' .. util.pp_sym(k.op.type))
 		end
 	else
-		attrs.label = '"' .. ('unbuilt: ' .. k.name):gsub('"', '\\"') .. '"'
+		attrs.label = 'unbuilt'
 	end
+
+	attrs.label = ('%q'):format(k.name .. ' = ' .. attrs.label)
 
 	return graphviz.pp_node(id, attrs)
 end
